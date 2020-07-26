@@ -1,20 +1,18 @@
-use std::{env, process::Stdio};
+use std::env;
 use tokio::{prelude::*, process::Command};
+use tokio_pty_command::{CommandExt as _, PtyMaster};
 
-type Result<T> = std::io::Result<T>;
+type Error = Box<dyn std::error::Error>;
+type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let shell = env::var_os("SHELL").unwrap();
+    let pty_master = PtyMaster::open()?;
 
-    let mut child = Command::new(shell)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()?;
+    let child = Command::new(shell).spawn_with_pty(&pty_master)?;
 
-    let child_stdin = child.stdin.take().unwrap();
-    let child_stdout = child.stdout.take().unwrap();
+    let (child_stdout, child_stdin) = io::split(pty_master);
     let status = child;
 
     tokio::spawn(async move { rsrs::receiver(io::stdin(), child_stdin).await.unwrap() });

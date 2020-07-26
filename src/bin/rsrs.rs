@@ -1,7 +1,8 @@
 use std::{env, process::Stdio};
 use tokio::{prelude::*, process::Command};
 
-type Result<T> = std::io::Result<T>;
+type Error = Box<dyn std::error::Error>;
+type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
