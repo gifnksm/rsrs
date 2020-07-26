@@ -29,8 +29,8 @@ async fn main() -> Result<()> {
     tokio::spawn(async move { rsrs::sender(io::stdin(), remote_stdin).await.unwrap() });
 
     match status.await?.code() {
-        Some(code) => eprintln!("process exited with {}", code),
-        None => eprintln!("process terminated by signal"),
+        Some(code) => eprintln!("local process exited with {}", code),
+        None => eprintln!("local process terminated by signal"),
     }
 
     Ok(())
