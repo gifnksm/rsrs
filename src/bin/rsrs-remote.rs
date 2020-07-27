@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, ffi::OsString, os::unix::process::CommandExt, process::Command as StdCommand};
 use tokio::{prelude::*, process::Command};
 use tokio_pty_command::{CommandExt as _, PtyMaster};
 
@@ -10,17 +10,22 @@ async fn main() -> Result<()> {
     env::set_var("RUST_BACKTRACE", "1");
 
     // FIXME: set TERM envvar
-    // FIXME: fork SHELL as a login shell (add prefix '-' to argv[0] or add --login arg)
     let shell = env::var_os("SHELL").unwrap();
+    let mut arg0 = OsString::from("-");
+    arg0.push(&shell);
+
     let pty_master = PtyMaster::open()?;
 
-    let child = Command::new(shell).spawn_with_pty(&pty_master)?;
+    let mut std_command = StdCommand::new(shell);
+    std_command.arg0(arg0);
+    let child = Command::from(std_command).spawn_with_pty(&pty_master)?;
 
     let (child_stdout, child_stdin) = io::split(pty_master);
     let status = child;
 
     // FIXME: create a dedicated thread for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
     tokio::spawn(async move { rsrs::receiver(io::stdin(), child_stdin).await.unwrap() });
+    // FIXME: panic on child process exit (child_stdio.read() returns EIO)
     tokio::spawn(async move { rsrs::sender(child_stdout, io::stdout()).await.unwrap() });
 
     match status.await?.code() {
