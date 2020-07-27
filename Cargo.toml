@@ -11,8 +11,10 @@ members = ["tokio-pty-command"]
 
 [dependencies]
 futures = "0.3.5"
+nix = "0.18.0"
 serde = { version = "1.0.114", features = ["derive"] }
 tokio = { version = "0.2.22", features = ["io-std", "io-util", "macros", "process", "rt-threaded"] }
 tokio-serde = { version = "0.6.1", features = ["bincode"] }
 tokio-util = { version = "0.3.1", features = ["codec"] }
 tokio-pty-command = { path = "tokio-pty-command" }
+parking_lot = "0.11.0"

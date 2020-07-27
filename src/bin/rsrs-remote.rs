@@ -7,6 +7,10 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env::set_var("RUST_BACKTRACE", "1");
+
+    // FIXME: set TERM envvar
+    // FIXME: fork SHELL as a login shell (add prefix '-' to argv[0] or add --login arg)
     let shell = env::var_os("SHELL").unwrap();
     let pty_master = PtyMaster::open()?;
 
@@ -16,7 +20,6 @@ async fn main() -> Result<()> {
     let status = child;
 
     // FIXME: create a dedicated thread for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
-    // FIXME: raw mode
     tokio::spawn(async move { rsrs::receiver(io::stdin(), child_stdin).await.unwrap() });
     tokio::spawn(async move { rsrs::sender(child_stdout, io::stdout()).await.unwrap() });
 

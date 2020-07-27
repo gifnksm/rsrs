@@ -29,7 +29,7 @@ impl CommandExt for process::Command {
         unsafe {
             self.pre_exec(move || {
                 let _pid = unistd::setsid().map_err(nix2io)?;
-                ioctl::tiocsctty(0, 1).map_err(nix2io)?;
+                ioctl::tiocsctty(libc::STDIN_FILENO, 1).map_err(nix2io)?;
                 Ok(())
             });
         }
