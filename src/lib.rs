@@ -48,6 +48,7 @@ pub async fn receiver(
     while let Some(frame) = reader.next().await {
         let frame = frame?;
         sink.write_all(&frame.data[..]).await?;
+        sink.flush().await?;
     }
     Ok(())
 }
