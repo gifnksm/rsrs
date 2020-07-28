@@ -3,7 +3,9 @@ use tokio::{prelude::*, stream::StreamExt};
 use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
 use tokio_util::codec::{self, LengthDelimitedCodec};
 
-type Result<T> = std::io::Result<T>;
+pub mod terminal;
+
+pub type Result<T> = std::io::Result<T>;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Frame {
@@ -71,4 +73,8 @@ pub async fn sender(
         writer.send(frame).await.unwrap();
     }
     Ok(())
+}
+
+fn nix2io(e: nix::Error) -> io::Error {
+    e.as_errno().unwrap().into()
 }
