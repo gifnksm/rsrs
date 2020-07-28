@@ -67,6 +67,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "etc-passwd"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73e32de8c5bd23747595e73e05e8ed77d5a30102f012aede22249f9e16c93399"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "fuchsia-zircon"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -448,6 +457,7 @@ checksum = "41cc0f7e4d5d4544e8861606a285bb08d3e70712ccc7d2b84d7c0ccfaf4b05ce"
 name = "rsrs"
 version = "0.1.0"
 dependencies = [
+ "etc-passwd",
  "futures",
  "nix",
  "parking_lot",
