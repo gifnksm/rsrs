@@ -12,11 +12,14 @@ members = ["tokio-pty-command"]
 
 [dependencies]
 etc-passwd = "0.1.1"
-futures = "0.3.5"
 nix = "0.18.0"
 serde = { version = "1.0.114", features = ["derive"] }
-tokio = { version = "0.2.22", features = ["io-std", "io-util", "macros", "process", "rt-threaded"] }
+tokio = { version = "0.2.22", features = ["io-std", "io-util", "macros", "process", "rt-threaded", "sync"] }
 tokio-serde = { version = "0.6.1", features = ["bincode"] }
 tokio-util = { version = "0.3.1", features = ["codec"] }
 tokio-pty-command = { path = "tokio-pty-command" }
 parking_lot = "0.11.0"
+futures-core = "0.3.5"
+futures-util = "0.3.5"
+once_cell = "1.4.0"
+generational-arena = "0.2.8"

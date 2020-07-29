@@ -1,16 +1,15 @@
-use futures::SinkExt;
+use self::protocol::Frame;
+use futures_util::SinkExt;
 use tokio::{prelude::*, stream::StreamExt};
 use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
 use tokio_util::codec::{self, LengthDelimitedCodec};
 
+pub mod local;
+pub mod protocol;
+pub mod remote;
 pub mod terminal;
 
-pub type Result<T> = std::io::Result<T>;
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Frame {
-    data: Vec<u8>,
-}
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub type FramedWrite<T> = SymmetricallyFramed<
     codec::FramedWrite<T, LengthDelimitedCodec>,
@@ -48,9 +47,13 @@ pub async fn receiver(
 ) -> Result<()> {
     let mut reader = Frame::new_reader(source);
     while let Some(frame) = reader.next().await {
-        let frame = frame?;
-        sink.write_all(&frame.data[..]).await?;
-        sink.flush().await?;
+        match frame? {
+            Frame::Output(output) => {
+                sink.write_all(&output.data[..]).await?;
+                sink.flush().await?;
+            }
+            frame => panic!("{:?}", frame),
+        }
     }
     Ok(())
 }
@@ -67,9 +70,10 @@ pub async fn sender(
             break;
         }
 
-        let frame = Frame {
+        let frame = Frame::Output(protocol::Output {
+            id: protocol::Id(0),
             data: buf[..n].into(),
-        };
+        });
         writer.send(frame).await.unwrap();
     }
     Ok(())
