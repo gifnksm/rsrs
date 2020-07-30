@@ -8,17 +8,6 @@ pub enum Frame {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum Local2Remote {
-    Spawn(Spawn),
-    Output(Output),
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum Remote2Local {
-    Output(Output),
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Spawn {
     pub id: Id,
     pub env_vars: Vec<String>,

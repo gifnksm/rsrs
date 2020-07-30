@@ -20,7 +20,7 @@ static ROUTER: Lazy<Mutex<Router>> = Lazy::new(|| Mutex::new(Router::new()));
 
 #[derive(Debug)]
 struct Router {
-    tx: Option<mpsc::Sender<protocol::Output>>,
+    tx: Option<mpsc::Sender<protocol::Frame>>,
     id_map: HashMap<protocol::Id, Index>,
     channels: Arena<(protocol::Id, mpsc::Sender<protocol::Output>)>,
 }
@@ -87,8 +87,7 @@ pub async fn sender(remote_stream: impl AsyncWrite) -> Result<()> {
     let frames = send_frames(remote_stream);
     pin_mut!(frames);
 
-    while let Some(output) = rx.next().await {
-        let frame = protocol::Remote2Local::Output(output);
+    while let Some(frame) = rx.next().await {
         frames.send(frame).await?;
     }
 
@@ -101,7 +100,7 @@ pub async fn receiver(remote_stream: impl AsyncRead) -> Result<()> {
 
     while let Some(frame) = frames.next().await {
         match frame? {
-            protocol::Local2Remote::Spawn(spawn) => {
+            protocol::Frame::Spawn(spawn) => {
                 let rx = ROUTER
                     .lock()
                     .insert(spawn.id)
@@ -111,7 +110,7 @@ pub async fn receiver(remote_stream: impl AsyncRead) -> Result<()> {
                     let _ = spawn_process(rx, spawn).await;
                 });
             }
-            protocol::Local2Remote::Output(output) => {
+            protocol::Frame::Output(output) => {
                 let sender = ROUTER.lock().get_mut(output.id);
                 if let Some((_, mut tx)) = sender {
                     tx.send(output).await?;
@@ -122,14 +121,12 @@ pub async fn receiver(remote_stream: impl AsyncRead) -> Result<()> {
     Ok(())
 }
 
-fn received_frames(
-    stream: impl AsyncRead,
-) -> impl Stream<Item = io::Result<protocol::Local2Remote>> {
+fn received_frames(stream: impl AsyncRead) -> impl Stream<Item = io::Result<protocol::Frame>> {
     let length_delimited = codec::FramedRead::new(stream, LengthDelimitedCodec::new());
     SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
 }
 
-fn send_frames(stream: impl AsyncWrite) -> impl Sink<protocol::Remote2Local, Error = io::Error> {
+fn send_frames(stream: impl AsyncWrite) -> impl Sink<protocol::Frame, Error = io::Error> {
     let length_delimited = codec::FramedWrite::new(stream, LengthDelimitedCodec::new());
     SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
 }
@@ -177,10 +174,10 @@ async fn spawn_process(rx: Receiver, spawn: protocol::Spawn) -> Result<()> {
                 break;
             }
 
-            let frame = protocol::Output {
+            let frame = protocol::Frame::Output(protocol::Output {
                 id: spawn.id,
                 data: buf[..n].into(),
-            };
+            });
             // FIXME: error handling
             tx.send(frame).await.unwrap();
         }
