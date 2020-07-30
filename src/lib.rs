@@ -1,29 +1,29 @@
-use self::protocol::Frame;
+use self::protocol::RemoteCommand;
 use futures_util::SinkExt;
 use tokio::{prelude::*, stream::StreamExt};
 use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
 use tokio_util::codec::{self, LengthDelimitedCodec};
 
-pub mod local;
+mod endpoint;
 pub mod protocol;
-pub mod remote;
+pub mod router;
 pub mod terminal;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub type FramedWrite<T> = SymmetricallyFramed<
     codec::FramedWrite<T, LengthDelimitedCodec>,
-    Frame,
-    SymmetricalBincode<Frame>,
+    RemoteCommand,
+    SymmetricalBincode<RemoteCommand>,
 >;
 
 pub type FramedRead<T> = SymmetricallyFramed<
     codec::FramedRead<T, LengthDelimitedCodec>,
-    Frame,
-    SymmetricalBincode<Frame>,
+    RemoteCommand,
+    SymmetricalBincode<RemoteCommand>,
 >;
 
-impl Frame {
+impl RemoteCommand {
     pub fn new_writer<T>(inner: T) -> FramedWrite<T>
     where
         T: AsyncWrite,
@@ -45,10 +45,10 @@ pub async fn receiver(
     source: impl AsyncRead + Unpin,
     mut sink: impl AsyncWrite + Unpin,
 ) -> Result<()> {
-    let mut reader = Frame::new_reader(source);
+    let mut reader = RemoteCommand::new_reader(source);
     while let Some(frame) = reader.next().await {
         match frame? {
-            Frame::Output(output) => {
+            RemoteCommand::Output(output) => {
                 sink.write_all(&output.data[..]).await?;
                 sink.flush().await?;
             }
@@ -62,7 +62,7 @@ pub async fn sender(
     mut source: impl AsyncRead + Unpin,
     sink: impl AsyncWrite + Unpin,
 ) -> Result<()> {
-    let mut writer = Frame::new_writer(sink);
+    let mut writer = RemoteCommand::new_writer(sink);
     let mut buf = vec![0u8; 4096];
     loop {
         let n = source.read(&mut buf).await.unwrap();
@@ -70,7 +70,7 @@ pub async fn sender(
             break;
         }
 
-        let frame = Frame::Output(protocol::Output {
+        let frame = RemoteCommand::Output(protocol::Output {
             id: protocol::Id(0),
             data: buf[..n].into(),
         });

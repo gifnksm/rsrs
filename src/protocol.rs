@@ -2,7 +2,7 @@
 pub struct Id(pub usize);
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum Frame {
+pub enum RemoteCommand {
     Spawn(Spawn),
     Output(Output),
 }
