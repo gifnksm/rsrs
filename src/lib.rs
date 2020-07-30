@@ -9,7 +9,8 @@ pub mod protocol;
 pub mod router;
 pub mod terminal;
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type Error = Box<dyn std::error::Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub type FramedWrite<T> = SymmetricallyFramed<
     codec::FramedWrite<T, LengthDelimitedCodec>,

@@ -11,7 +11,7 @@ use tokio_pty_command::{CommandExt as _, PtyMaster};
 
 // TODO: abstract as endpoint
 
-pub(crate) async fn spawn_process(rx: Receiver, spawn: protocol::Spawn) -> Result<()> {
+pub(crate) async fn run(rx: Receiver, spawn: protocol::Spawn) -> Result<()> {
     let shell = if let Some(passwd) = Passwd::current_user()? {
         OsString::from(passwd.shell.to_str()?)
     } else if let Some(shell) = env::var_os("SHELL") {

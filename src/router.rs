@@ -10,6 +10,7 @@ use once_cell::sync::Lazy;
 use parking_lot::{Mutex, MutexGuard};
 use std::{
     collections::{hash_map::Entry, HashMap},
+    io,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -21,7 +22,8 @@ static ROUTER: Lazy<Mutex<Router>> = Lazy::new(|| Mutex::new(Router::new()));
 
 #[derive(Debug)]
 pub(crate) struct Router {
-    tx: Option<mpsc::Sender<protocol::RemoteCommand>>,
+    peer_tx: Option<mpsc::Sender<protocol::RemoteCommand>>,
+    handler_tx: Option<mpsc::Sender<protocol::Command>>,
     id_map: HashMap<protocol::Id, Index>,
     channels: Arena<(protocol::Id, mpsc::Sender<protocol::Output>)>,
 }
@@ -29,7 +31,8 @@ pub(crate) struct Router {
 impl Router {
     fn new() -> Self {
         Self {
-            tx: None,
+            peer_tx: None,
+            handler_tx: None,
             id_map: HashMap::new(),
             channels: Arena::new(),
         }
@@ -38,7 +41,7 @@ impl Router {
     pub(crate) fn insert(&mut self, id: protocol::Id) -> Option<Receiver> {
         match self.id_map.entry(id) {
             Entry::Vacant(e) => {
-                // FIXME: implement backpressure
+                // FIXME: implement back-pressure
                 let (tx, rx) = mpsc::channel(64);
                 let index = self.channels.insert((id, tx));
                 e.insert(index);
@@ -70,7 +73,7 @@ impl Router {
     }
 
     pub(crate) fn sender(&self) -> mpsc::Sender<protocol::RemoteCommand> {
-        self.tx.clone().unwrap()
+        self.peer_tx.clone().unwrap()
     }
 }
 
@@ -99,54 +102,95 @@ impl Drop for Receiver {
     }
 }
 
-pub async fn sender(stream: impl AsyncWrite) -> Result<()> {
-    let (tx, mut rx) = mpsc::channel(64);
-    ROUTER.lock().tx = Some(tx);
-    let frames = send_frames(stream);
-    pin_mut!(frames);
+async fn sender(
+    sink: impl Sink<protocol::RemoteCommand, Error = io::Error>,
+    mut peer_rx: mpsc::Receiver<protocol::RemoteCommand>,
+) -> Result<()> {
+    pin_mut!(sink);
 
-    while let Some(frame) = rx.next().await {
-        frames.send(frame).await?;
+    while let Some(frame) = peer_rx.next().await {
+        sink.send(frame).await?;
     }
 
     Ok(())
 }
 
-pub async fn receiver(stream: impl AsyncRead) -> Result<()> {
-    let frames = received_frames(stream);
-    pin_mut!(frames);
+async fn receiver(source: impl Stream<Item = io::Result<protocol::RemoteCommand>>) -> Result<()> {
+    pin_mut!(source);
 
-    while let Some(frame) = frames.next().await {
-        match frame? {
-            protocol::RemoteCommand::Spawn(spawn) => {
-                let rx = ROUTER
-                    .lock()
-                    .insert(spawn.id)
-                    .expect("received id already used");
-                tokio::spawn(async move {
-                    // FIXME: error handling
-                    let _ = endpoint::spawn::spawn_process(rx, spawn).await;
-                });
-            }
-            protocol::RemoteCommand::Output(output) => {
-                let sender = ROUTER.lock().get_mut(output.id);
-                if let Some((_, mut tx)) = sender {
-                    tx.send(output).await?;
+    while let Some(frame) = source.next().await {
+        let frame = frame?;
+        let mut tx = ROUTER.lock().handler_tx.clone().unwrap();
+        tx.send(protocol::Command::Remote(frame)).await?;
+    }
+    Ok(())
+}
+
+pub async fn handler(
+    source: impl Stream<Item = io::Result<protocol::RemoteCommand>> + Send + 'static,
+    sink: impl Sink<protocol::RemoteCommand, Error = io::Error> + Send + 'static,
+) -> Result<()> {
+    let (handler_tx, mut handler_rx) = mpsc::channel(64);
+    let (peer_tx, peer_rx) = mpsc::channel(64);
+    ROUTER.lock().peer_tx = Some(peer_tx);
+    ROUTER.lock().handler_tx = Some(handler_tx);
+
+    tokio::spawn(async move {
+        sender(sink, peer_rx).await.unwrap();
+    });
+    tokio::spawn(async move {
+        receiver(source).await.unwrap();
+    });
+
+    while let Some(command) = handler_rx.next().await {
+        match command {
+            protocol::Command::Local(local) => match local {
+                protocol::LocalCommand::Source(source) => {
+                    tokio::spawn(async move {
+                        // FIXME: error handling
+                        let _ = endpoint::source::run(source).await;
+                    });
                 }
-            }
+                protocol::LocalCommand::Sink(sink) => {
+                    tokio::spawn(async move {
+                        // FIXME: error handling
+                        let _ = endpoint::sink::run(sink).await;
+                    });
+                }
+            },
+            protocol::Command::Remote(remote) => match remote {
+                protocol::RemoteCommand::Spawn(spawn) => {
+                    let rx = ROUTER
+                        .lock()
+                        .insert(spawn.id)
+                        .expect("received id already used");
+                    tokio::spawn(async move {
+                        // FIXME: error handling
+                        let _ = endpoint::process::run(rx, spawn).await;
+                    });
+                }
+                protocol::RemoteCommand::Output(output) => {
+                    let sender = ROUTER.lock().get_mut(output.id);
+                    if let Some((_, mut tx)) = sender {
+                        tx.send(output).await?;
+                    }
+                }
+            },
         }
     }
     Ok(())
 }
 
-fn received_frames(
+pub fn received_frames(
     stream: impl AsyncRead,
 ) -> impl Stream<Item = io::Result<protocol::RemoteCommand>> {
     let length_delimited = codec::FramedRead::new(stream, LengthDelimitedCodec::new());
     SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
 }
 
-fn send_frames(stream: impl AsyncWrite) -> impl Sink<protocol::RemoteCommand, Error = io::Error> {
+pub fn send_frames(
+    stream: impl AsyncWrite,
+) -> impl Sink<protocol::RemoteCommand, Error = io::Error> {
     let length_delimited = codec::FramedWrite::new(stream, LengthDelimitedCodec::new());
     SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
 }
