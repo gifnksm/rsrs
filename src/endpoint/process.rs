@@ -4,7 +4,6 @@ use crate::{
     Result,
 };
 use etc_passwd::Passwd;
-use futures_util::StreamExt;
 use std::{env, ffi::OsString, os::unix::process::CommandExt, process::Command as StdCommand};
 use tokio::{prelude::*, process::Command};
 use tokio_pty_command::{CommandExt as _, PtyMaster};
@@ -32,36 +31,28 @@ pub(crate) async fn run(rx: Receiver, spawn: protocol::Spawn) -> Result<()> {
     let (child_stdout, child_stdin) = io::split(pty_master);
     let status = child;
 
-    tokio::spawn(async move {
-        let mut rx = rx;
-        let mut child_stdin = child_stdin;
-        while let Some(output) = rx.next().await {
-            // FIXME: error handling
-            child_stdin.write_all(&output.data[..]).await.unwrap();
-            child_stdin.flush().await.unwrap();
-        }
-    });
+    let mut handler_tx = router::lock().handler_tx();
 
-    let tx = router::lock().sender();
-    tokio::spawn(async move {
-        let mut tx = tx;
-        let mut child_stdout = child_stdout;
-        let mut buf = vec![0u8; 4096];
-        loop {
-            // FIXME: error handling
-            let n = child_stdout.read(&mut buf).await.unwrap();
-            if n == 0 {
-                break;
-            }
-
-            let frame = protocol::RemoteCommand::Output(protocol::Output {
+    handler_tx
+        .send(protocol::Command::Local(protocol::LocalCommand::Sink(
+            protocol::Sink {
                 id: spawn.id,
-                data: buf[..n].into(),
-            });
-            // FIXME: error handling
-            tx.send(frame).await.unwrap();
-        }
-    });
+                rx,
+                stream: Box::new(child_stdin),
+            },
+        )))
+        .await
+        .unwrap();
+
+    handler_tx
+        .send(protocol::Command::Local(protocol::LocalCommand::Source(
+            protocol::Source {
+                id: spawn.id,
+                stream: Box::new(child_stdout),
+            },
+        )))
+        .await
+        .unwrap();
 
     match status.await?.code() {
         Some(code) => eprintln!("remote process exited with {}", code),

@@ -1,4 +1,5 @@
-use tokio::{prelude::*, sync::mpsc};
+use crate::router;
+use tokio::prelude::*;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Id(pub usize);
@@ -43,7 +44,7 @@ pub(crate) struct Source {
 #[derive(custom_debug::Debug)]
 pub(crate) struct Sink {
     pub(crate) id: Id,
-    pub(crate) rx: mpsc::Receiver<Output>,
+    pub(crate) rx: router::Receiver,
     #[debug(skip)]
     pub(crate) stream: Box<dyn AsyncWrite + Send + Unpin>,
 }

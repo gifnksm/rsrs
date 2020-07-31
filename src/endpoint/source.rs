@@ -2,7 +2,7 @@ use crate::{protocol, router, Result};
 use tokio::prelude::*;
 
 pub(crate) async fn run(source: protocol::Source) -> Result<()> {
-    let mut tx = router::lock().sender();
+    let mut tx = router::lock().peer_tx();
     let protocol::Source { id, mut stream } = source;
 
     let mut buf = vec![0u8; 4096];

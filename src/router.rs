@@ -72,7 +72,11 @@ impl Router {
             .cloned()
     }
 
-    pub(crate) fn sender(&self) -> mpsc::Sender<protocol::RemoteCommand> {
+    pub(crate) fn handler_tx(&self) -> mpsc::Sender<protocol::Command> {
+        self.handler_tx.clone().unwrap()
+    }
+
+    pub(crate) fn peer_tx(&self) -> mpsc::Sender<protocol::RemoteCommand> {
         self.peer_tx.clone().unwrap()
     }
 }
@@ -170,8 +174,8 @@ pub async fn handler(
                     });
                 }
                 protocol::RemoteCommand::Output(output) => {
-                    let sender = ROUTER.lock().get_mut(output.id);
-                    if let Some((_, mut tx)) = sender {
+                    let peer_tx = ROUTER.lock().get_mut(output.id);
+                    if let Some((_, mut tx)) = peer_tx {
                         tx.send(output).await?;
                     }
                 }
