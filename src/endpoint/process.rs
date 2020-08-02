@@ -8,8 +8,6 @@ use std::{env, ffi::OsString, os::unix::process::CommandExt, process::Command as
 use tokio::{prelude::*, process::Command};
 use tokio_pty_command::{CommandExt as _, PtyMaster};
 
-// TODO: abstract as endpoint
-
 pub(crate) async fn run(rx: Receiver, spawn: protocol::Spawn) -> Result<()> {
     let shell = if let Some(passwd) = Passwd::current_user()? {
         OsString::from(passwd.shell.to_str()?)
