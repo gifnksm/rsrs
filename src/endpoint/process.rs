@@ -9,6 +9,8 @@ use tokio::{prelude::*, process::Command};
 use tokio_pty_command::{CommandExt as _, PtyMaster};
 
 pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<()> {
+    let protocol::Spawn { id, env_vars } = spawn;
+
     let shell = if let Some(passwd) = Passwd::current_user()? {
         OsString::from(passwd.shell.to_str()?)
     } else if let Some(shell) = env::var_os("SHELL") {
@@ -24,6 +26,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
 
     let mut std_command = StdCommand::new(shell);
     std_command.arg0(arg0);
+    std_command.envs(env_vars);
     let child = Command::from(std_command).spawn_with_pty(&pty_master)?;
 
     let (child_stdout, child_stdin) = io::split(pty_master);
@@ -33,7 +36,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
 
     handler_tx
         .send(protocol::Command::Sink(protocol::Sink {
-            id: spawn.id,
+            id,
             rx,
             stream: Box::new(child_stdin),
         }))
@@ -41,7 +44,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
 
     handler_tx
         .send(protocol::Command::Source(protocol::Source {
-            id: spawn.id,
+            id,
             stream: Box::new(child_stdout),
         }))
         .await?;
@@ -50,7 +53,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
     handler_tx
         .send(protocol::Command::Send(
             protocol::RemoteCommand::ProcessExit(protocol::ProcessExitStatus {
-                id: spawn.id,
+                id,
                 status: code.into(),
             }),
         ))

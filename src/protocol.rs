@@ -1,5 +1,5 @@
 use crate::router;
-use std::os::unix::process::ExitStatusExt as _;
+use std::{ffi::OsString, os::unix::process::ExitStatusExt as _};
 use tokio::prelude::*;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
@@ -36,7 +36,7 @@ pub enum Command {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Spawn {
     pub id: Id,
-    pub env_vars: Vec<String>,
+    pub env_vars: Vec<(OsString, OsString)>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

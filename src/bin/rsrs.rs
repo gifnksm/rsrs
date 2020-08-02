@@ -1,6 +1,6 @@
 use parking_lot::Mutex;
 use rsrs::{protocol, router, terminal::RawMode};
-use std::{env, panic, process::Stdio, sync::Arc};
+use std::{env, ffi::OsStr, panic, process::Stdio, sync::Arc};
 use tokio::{io::BufReader, prelude::*, process::Command};
 
 type Error = Box<dyn std::error::Error>;
@@ -55,6 +55,11 @@ async fn main() -> Result<()> {
     let id = router::lock().new_id();
     let status_rx = router::lock().insert_status_notifier(id).unwrap();
     let channel_rx = router::lock().insert_channel(id).unwrap();
+    let mut env_vars = vec![];
+    if let Some(term) = env::var_os("TERM") {
+        env_vars.push((OsStr::new("TERM").to_owned(), term));
+    }
+
     handler_tx
         .send(protocol::Command::Sink(protocol::Sink {
             id,
@@ -64,10 +69,7 @@ async fn main() -> Result<()> {
         .await?;
     handler_tx
         .send(protocol::Command::Send(protocol::RemoteCommand::Spawn(
-            protocol::Spawn {
-                id,
-                env_vars: vec![],
-            },
+            protocol::Spawn { id, env_vars },
         )))
         .await?;
     handler_tx
