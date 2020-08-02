@@ -1,6 +1,5 @@
 use self::protocol::RemoteCommand;
-use futures_util::SinkExt;
-use tokio::{prelude::*, stream::StreamExt};
+use tokio::prelude::*;
 use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
 use tokio_util::codec::{self, LengthDelimitedCodec};
 
@@ -40,44 +39,6 @@ impl RemoteCommand {
         let length_delimited = codec::FramedRead::new(inner, LengthDelimitedCodec::new());
         SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
     }
-}
-
-pub async fn receiver(
-    source: impl AsyncRead + Unpin,
-    mut sink: impl AsyncWrite + Unpin,
-) -> Result<()> {
-    let mut reader = RemoteCommand::new_reader(source);
-    while let Some(frame) = reader.next().await {
-        match frame? {
-            RemoteCommand::Output(output) => {
-                sink.write_all(&output.data[..]).await?;
-                sink.flush().await?;
-            }
-            frame => panic!("{:?}", frame),
-        }
-    }
-    Ok(())
-}
-
-pub async fn sender(
-    mut source: impl AsyncRead + Unpin,
-    sink: impl AsyncWrite + Unpin,
-) -> Result<()> {
-    let mut writer = RemoteCommand::new_writer(sink);
-    let mut buf = vec![0u8; 4096];
-    loop {
-        let n = source.read(&mut buf).await.unwrap();
-        if n == 0 {
-            break;
-        }
-
-        let frame = RemoteCommand::Output(protocol::Output {
-            id: protocol::Id(0),
-            data: buf[..n].into(),
-        });
-        writer.send(frame).await.unwrap();
-    }
-    Ok(())
 }
 
 fn nix2io(e: nix::Error) -> io::Error {

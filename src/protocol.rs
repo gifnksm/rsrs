@@ -1,25 +1,36 @@
 use crate::router;
+use std::os::unix::process::ExitStatusExt as _;
 use tokio::prelude::*;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct Id(pub usize);
+pub enum ProcessKind {
+    Local,
+    Remote,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct Id(ProcessKind, usize);
+
+impl Id {
+    pub(crate) fn new(kind: ProcessKind, id: usize) -> Self {
+        Self(kind, id)
+    }
+}
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum RemoteCommand {
     Spawn(Spawn),
     Output(Output),
+    ProcessExit(ProcessExitStatus),
+    Exit,
 }
 
 #[derive(Debug)]
-pub(crate) enum LocalCommand {
+pub enum Command {
+    Recv(RemoteCommand),
+    Send(RemoteCommand),
     Source(Source),
     Sink(Sink),
-}
-
-#[derive(Debug)]
-pub(crate) enum Command {
-    Remote(RemoteCommand),
-    Local(LocalCommand),
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -34,17 +45,41 @@ pub struct Output {
     pub data: Vec<u8>,
 }
 
-#[derive(custom_debug::Debug)]
-pub(crate) struct Source {
-    pub(crate) id: Id,
-    #[debug(skip)]
-    pub(crate) stream: Box<dyn AsyncRead + Send + Unpin>,
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ProcessExitStatus {
+    pub id: Id,
+    pub status: ExitStatus,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum ExitStatus {
+    Code(i32),
+    Signal(i32),
+}
+
+impl From<std::process::ExitStatus> for ExitStatus {
+    fn from(status: std::process::ExitStatus) -> Self {
+        if let Some(code) = status.code() {
+            Self::Code(code)
+        } else if let Some(signal) = status.signal() {
+            Self::Signal(signal)
+        } else {
+            panic!("invalid exit status")
+        }
+    }
 }
 
 #[derive(custom_debug::Debug)]
-pub(crate) struct Sink {
-    pub(crate) id: Id,
-    pub(crate) rx: router::Receiver,
+pub struct Source {
+    pub id: Id,
     #[debug(skip)]
-    pub(crate) stream: Box<dyn AsyncWrite + Send + Unpin>,
+    pub stream: Box<dyn AsyncRead + Send + Unpin>,
+}
+
+#[derive(custom_debug::Debug)]
+pub struct Sink {
+    pub id: Id,
+    pub rx: router::ChannelReceiver,
+    #[debug(skip)]
+    pub stream: Box<dyn AsyncWrite + Send + Unpin>,
 }

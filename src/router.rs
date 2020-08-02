@@ -1,5 +1,5 @@
 use crate::{endpoint, protocol, Result};
-use futures_core::Stream;
+use futures_core::{Future, Stream};
 use futures_util::{
     pin_mut,
     sink::{Sink, SinkExt},
@@ -14,84 +14,131 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::{prelude::*, sync::mpsc};
-use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
-use tokio_util::codec::{self, LengthDelimitedCodec};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 
 static ROUTER: Lazy<Mutex<Router>> = Lazy::new(|| Mutex::new(Router::new()));
 
 #[derive(Debug)]
-pub(crate) struct Router {
-    peer_tx: Option<mpsc::Sender<protocol::RemoteCommand>>,
+pub struct Router {
+    kind: Option<protocol::ProcessKind>,
+    id: usize,
     handler_tx: Option<mpsc::Sender<protocol::Command>>,
-    id_map: HashMap<protocol::Id, Index>,
+    channel_id_map: HashMap<protocol::Id, Index>,
     channels: Arena<(protocol::Id, mpsc::Sender<protocol::Output>)>,
+    status_id_map: HashMap<protocol::Id, Index>,
+    status_notifiers: Arena<(protocol::Id, oneshot::Sender<protocol::ProcessExitStatus>)>,
 }
 
 impl Router {
     fn new() -> Self {
         Self {
-            peer_tx: None,
+            kind: None,
+            id: 0,
             handler_tx: None,
-            id_map: HashMap::new(),
+            channel_id_map: HashMap::new(),
             channels: Arena::new(),
+            status_id_map: HashMap::new(),
+            status_notifiers: Arena::new(),
         }
     }
 
-    pub(crate) fn insert(&mut self, id: protocol::Id) -> Option<Receiver> {
-        match self.id_map.entry(id) {
+    pub fn insert_channel(&mut self, id: protocol::Id) -> Option<ChannelReceiver> {
+        match self.channel_id_map.entry(id) {
             Entry::Vacant(e) => {
                 // FIXME: implement back-pressure
                 let (tx, rx) = mpsc::channel(64);
                 let index = self.channels.insert((id, tx));
                 e.insert(index);
-                Some(Receiver { index, rx })
+                Some(ChannelReceiver { index, rx })
             }
             Entry::Occupied(_e) => None,
         }
     }
 
-    pub(crate) fn remove(
+    fn remove_channel(
         &mut self,
         index: Index,
     ) -> Option<(protocol::Id, mpsc::Sender<protocol::Output>)> {
         self.channels.remove(index).map(|(id, tx)| {
-            let _ = self.id_map.remove(&id).expect("corrupt internal status");
+            let _ = self
+                .channel_id_map
+                .remove(&id)
+                .expect("corrupt internal status");
             (id, tx)
         })
     }
 
-    pub(crate) fn get_mut(
+    fn get_channel(
         &mut self,
         id: protocol::Id,
     ) -> Option<(protocol::Id, mpsc::Sender<protocol::Output>)> {
         let channels = &mut self.channels;
-        self.id_map
+        self.channel_id_map
             .get(&id)
             .and_then(|index| channels.get_mut(*index))
             .cloned()
     }
 
-    pub(crate) fn handler_tx(&self) -> mpsc::Sender<protocol::Command> {
+    pub fn insert_status_notifier(&mut self, id: protocol::Id) -> Option<StatusReceiver> {
+        match self.status_id_map.entry(id) {
+            Entry::Vacant(e) => {
+                let (tx, rx) = oneshot::channel();
+                let index = self.status_notifiers.insert((id, tx));
+                e.insert(index);
+                Some(StatusReceiver { index, rx })
+            }
+            Entry::Occupied(_e) => None,
+        }
+    }
+
+    fn remove_status(
+        &mut self,
+        index: Index,
+    ) -> Option<(protocol::Id, oneshot::Sender<protocol::ProcessExitStatus>)> {
+        self.status_notifiers.remove(index).map(|(id, tx)| {
+            let _ = self
+                .status_id_map
+                .remove(&id)
+                .expect("corrupt internal status");
+            (id, tx)
+        })
+    }
+
+    fn take_status(
+        &mut self,
+        id: protocol::Id,
+    ) -> Option<(protocol::Id, oneshot::Sender<protocol::ProcessExitStatus>)> {
+        let notifiers = &mut self.status_notifiers;
+        self.status_id_map
+            .remove(&id)
+            .and_then(|index| notifiers.remove(index))
+    }
+
+    pub fn handler_tx(&self) -> mpsc::Sender<protocol::Command> {
         self.handler_tx.clone().unwrap()
     }
 
-    pub(crate) fn peer_tx(&self) -> mpsc::Sender<protocol::RemoteCommand> {
-        self.peer_tx.clone().unwrap()
+    pub fn new_id(&mut self) -> protocol::Id {
+        let id = self.id;
+        self.id += 1;
+        protocol::Id::new(self.kind.unwrap(), id)
     }
 }
 
-pub(crate) fn lock() -> MutexGuard<'static, Router> {
+pub fn lock() -> MutexGuard<'static, Router> {
     ROUTER.lock()
 }
 
 #[derive(Debug)]
-pub(crate) struct Receiver {
+pub struct ChannelReceiver {
     index: Index,
     rx: mpsc::Receiver<protocol::Output>,
 }
 
-impl Stream for Receiver {
+impl Stream for ChannelReceiver {
     type Item = protocol::Output;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -99,10 +146,31 @@ impl Stream for Receiver {
     }
 }
 
-impl Drop for Receiver {
+impl Drop for ChannelReceiver {
     fn drop(&mut self) {
         let mut router = ROUTER.lock();
-        router.remove(self.index);
+        router.remove_channel(self.index);
+    }
+}
+
+#[derive(Debug)]
+pub struct StatusReceiver {
+    index: Index,
+    rx: oneshot::Receiver<protocol::ProcessExitStatus>,
+}
+
+impl Future for StatusReceiver {
+    type Output = std::result::Result<protocol::ProcessExitStatus, oneshot::error::RecvError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.rx).poll(cx)
+    }
+}
+
+impl Drop for StatusReceiver {
+    fn drop(&mut self) {
+        let mut router = ROUTER.lock();
+        router.remove_status(self.index);
     }
 }
 
@@ -125,18 +193,69 @@ async fn receiver(source: impl Stream<Item = io::Result<protocol::RemoteCommand>
     while let Some(frame) = source.next().await {
         let frame = frame?;
         let mut tx = ROUTER.lock().handler_tx.clone().unwrap();
-        tx.send(protocol::Command::Remote(frame)).await?;
+        tx.send(protocol::Command::Recv(frame)).await?;
     }
     Ok(())
 }
 
-pub async fn handler(
+async fn router(
+    mut rx: mpsc::Receiver<protocol::Command>,
+    mut peer_tx: mpsc::Sender<protocol::RemoteCommand>,
+) -> Result<()> {
+    while let Some(command) = rx.next().await {
+        match command {
+            protocol::Command::Recv(remote) => match remote {
+                protocol::RemoteCommand::Spawn(spawn) => {
+                    let rx = ROUTER
+                        .lock()
+                        .insert_channel(spawn.id)
+                        .expect("received id already used");
+                    tokio::spawn(async move {
+                        // FIXME: error handling
+                        let _ = endpoint::process::run(rx, spawn).await;
+                    });
+                }
+                protocol::RemoteCommand::Output(output) => {
+                    let chan_tx = ROUTER.lock().get_channel(output.id);
+                    if let Some((_, mut tx)) = chan_tx {
+                        tx.send(output).await?;
+                    }
+                }
+                protocol::RemoteCommand::ProcessExit(status) => {
+                    let stat_tx = ROUTER.lock().take_status(status.id);
+                    if let Some((_, tx)) = stat_tx {
+                        // ignore error
+                        let _ = tx.send(status);
+                    }
+                }
+                protocol::RemoteCommand::Exit => break,
+            },
+            protocol::Command::Send(remote) => peer_tx.send(remote).await?,
+            protocol::Command::Source(source) => {
+                tokio::spawn(async move {
+                    // FIXME: error handling
+                    let _ = endpoint::source::run(source).await;
+                });
+            }
+            protocol::Command::Sink(sink) => {
+                tokio::spawn(async move {
+                    // FIXME: error handling
+                    let _ = endpoint::sink::run(sink).await;
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn spawn(
+    kind: protocol::ProcessKind,
     source: impl Stream<Item = io::Result<protocol::RemoteCommand>> + Send + 'static,
     sink: impl Sink<protocol::RemoteCommand, Error = io::Error> + Send + 'static,
-) -> Result<()> {
-    let (handler_tx, mut handler_rx) = mpsc::channel(64);
+) -> JoinHandle<()> {
+    let (handler_tx, handler_rx) = mpsc::channel(64);
     let (peer_tx, peer_rx) = mpsc::channel(64);
-    ROUTER.lock().peer_tx = Some(peer_tx);
+    ROUTER.lock().kind = Some(kind);
     ROUTER.lock().handler_tx = Some(handler_tx);
 
     tokio::spawn(async move {
@@ -145,56 +264,7 @@ pub async fn handler(
     tokio::spawn(async move {
         receiver(source).await.unwrap();
     });
-
-    while let Some(command) = handler_rx.next().await {
-        match command {
-            protocol::Command::Local(local) => match local {
-                protocol::LocalCommand::Source(source) => {
-                    tokio::spawn(async move {
-                        // FIXME: error handling
-                        let _ = endpoint::source::run(source).await;
-                    });
-                }
-                protocol::LocalCommand::Sink(sink) => {
-                    tokio::spawn(async move {
-                        // FIXME: error handling
-                        let _ = endpoint::sink::run(sink).await;
-                    });
-                }
-            },
-            protocol::Command::Remote(remote) => match remote {
-                protocol::RemoteCommand::Spawn(spawn) => {
-                    let rx = ROUTER
-                        .lock()
-                        .insert(spawn.id)
-                        .expect("received id already used");
-                    tokio::spawn(async move {
-                        // FIXME: error handling
-                        let _ = endpoint::process::run(rx, spawn).await;
-                    });
-                }
-                protocol::RemoteCommand::Output(output) => {
-                    let peer_tx = ROUTER.lock().get_mut(output.id);
-                    if let Some((_, mut tx)) = peer_tx {
-                        tx.send(output).await?;
-                    }
-                }
-            },
-        }
-    }
-    Ok(())
-}
-
-pub fn received_frames(
-    stream: impl AsyncRead,
-) -> impl Stream<Item = io::Result<protocol::RemoteCommand>> {
-    let length_delimited = codec::FramedRead::new(stream, LengthDelimitedCodec::new());
-    SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
-}
-
-pub fn send_frames(
-    stream: impl AsyncWrite,
-) -> impl Sink<protocol::RemoteCommand, Error = io::Error> {
-    let length_delimited = codec::FramedWrite::new(stream, LengthDelimitedCodec::new());
-    SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
+    tokio::spawn(async move {
+        router(handler_rx, peer_tx).await.unwrap();
+    })
 }

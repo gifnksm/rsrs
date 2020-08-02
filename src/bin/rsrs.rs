@@ -1,5 +1,5 @@
 use parking_lot::Mutex;
-use rsrs::terminal::RawMode;
+use rsrs::{protocol, router, terminal::RawMode};
 use std::{env, panic, process::Stdio, sync::Arc};
 use tokio::{io::BufReader, prelude::*, process::Command};
 
@@ -38,9 +38,13 @@ async fn main() -> Result<()> {
     let remote_stderr = child.stderr.take().unwrap();
     let status = child;
 
-    tokio::spawn(async move { rsrs::receiver(remote_stdout, io::stdout()).await.unwrap() });
-    // FIXME: create a dedicated thread for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
-    tokio::spawn(async move { rsrs::sender(io::stdin(), remote_stdin).await.unwrap() });
+    let reader = protocol::RemoteCommand::new_reader(remote_stdout);
+    let writer = protocol::RemoteCommand::new_writer(remote_stdin);
+
+    router::spawn(protocol::ProcessKind::Local, reader, writer);
+
+    let mut handler_tx = router::lock().handler_tx();
+
     tokio::spawn(async move {
         let mut lines = BufReader::new(remote_stderr).lines();
         while let Some(line) = lines.next_line().await.unwrap() {
@@ -48,8 +52,46 @@ async fn main() -> Result<()> {
         }
     });
 
-    let status = status.await?;
+    let id = router::lock().new_id();
+    let status_rx = router::lock().insert_status_notifier(id).unwrap();
+    let channel_rx = router::lock().insert_channel(id).unwrap();
+    handler_tx
+        .send(protocol::Command::Sink(protocol::Sink {
+            id,
+            rx: channel_rx,
+            stream: Box::new(io::stdout()),
+        }))
+        .await?;
+    handler_tx
+        .send(protocol::Command::Send(protocol::RemoteCommand::Spawn(
+            protocol::Spawn {
+                id,
+                env_vars: vec![],
+            },
+        )))
+        .await?;
+    handler_tx
+        .send(protocol::Command::Source(protocol::Source {
+            id,
+            stream: Box::new(io::stdin()),
+        }))
+        .await?;
+
+    let remote_status = status_rx.await?;
     raw.lock().leave()?;
+
+    match remote_status.status {
+        protocol::ExitStatus::Code(code) => eprintln!("remote process exited with {}", code),
+        protocol::ExitStatus::Signal(signal) => {
+            eprintln!("remote process exited with signal {}", signal)
+        }
+    }
+
+    handler_tx
+        .send(protocol::Command::Send(protocol::RemoteCommand::Exit))
+        .await?;
+
+    let status = status.await?;
 
     match status.code() {
         Some(code) => eprintln!("local process exited with {}", code),

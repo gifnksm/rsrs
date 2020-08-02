@@ -1,6 +1,6 @@
 use crate::{
     protocol,
-    router::{self, Receiver},
+    router::{self, ChannelReceiver},
     Result,
 };
 use etc_passwd::Passwd;
@@ -8,7 +8,7 @@ use std::{env, ffi::OsString, os::unix::process::CommandExt, process::Command as
 use tokio::{prelude::*, process::Command};
 use tokio_pty_command::{CommandExt as _, PtyMaster};
 
-pub(crate) async fn run(rx: Receiver, spawn: protocol::Spawn) -> Result<()> {
+pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<()> {
     let shell = if let Some(passwd) = Passwd::current_user()? {
         OsString::from(passwd.shell.to_str()?)
     } else if let Some(shell) = env::var_os("SHELL") {
@@ -32,30 +32,29 @@ pub(crate) async fn run(rx: Receiver, spawn: protocol::Spawn) -> Result<()> {
     let mut handler_tx = router::lock().handler_tx();
 
     handler_tx
-        .send(protocol::Command::Local(protocol::LocalCommand::Sink(
-            protocol::Sink {
-                id: spawn.id,
-                rx,
-                stream: Box::new(child_stdin),
-            },
-        )))
-        .await
-        .unwrap();
+        .send(protocol::Command::Sink(protocol::Sink {
+            id: spawn.id,
+            rx,
+            stream: Box::new(child_stdin),
+        }))
+        .await?;
 
     handler_tx
-        .send(protocol::Command::Local(protocol::LocalCommand::Source(
-            protocol::Source {
-                id: spawn.id,
-                stream: Box::new(child_stdout),
-            },
-        )))
-        .await
-        .unwrap();
+        .send(protocol::Command::Source(protocol::Source {
+            id: spawn.id,
+            stream: Box::new(child_stdout),
+        }))
+        .await?;
 
-    match status.await?.code() {
-        Some(code) => eprintln!("remote process exited with {}", code),
-        None => eprintln!("remote process terminated by signal"),
-    }
+    let code = status.await?;
+    handler_tx
+        .send(protocol::Command::Send(
+            protocol::RemoteCommand::ProcessExit(protocol::ProcessExitStatus {
+                id: spawn.id,
+                status: code.into(),
+            }),
+        ))
+        .await?;
 
     Ok(())
 }
