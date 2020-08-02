@@ -1,3 +1,4 @@
+use clap::derive::Clap as _;
 use parking_lot::Mutex;
 use rsrs::{protocol, router, terminal::RawMode};
 use std::{env, ffi::OsStr, panic, process::Stdio, sync::Arc};
@@ -6,12 +7,50 @@ use tokio::{io::BufReader, prelude::*, process::Command};
 type Error = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, clap::Clap)]
+#[clap(name = clap::crate_name!(), version = clap::crate_version!(), author = clap::crate_authors!(), about = clap::crate_description!())]
+struct Args {
+    /// Disable pseudo-terminal allocation.
+    #[clap(name = "disable-pty", short = "T", overrides_with = "force-enable-pty")]
+    disable_pty: bool,
+    /// Force pseudo-terminal allocation.
+    ///
+    /// This can be used to execute arbitrary screen-based programs on a remote machine,
+    /// which can be very useful, e.g. when implementing menu services.
+    #[clap(name = "force-enable-pty", short = "t", overrides_with = "disable-pty")]
+    force_enable_pty: bool,
+}
+
 // TODO: add tracing
 // TODO: set terminal window size/termios
-// TODO: argument parsing
+
+#[derive(Debug)]
+pub enum PtyMode {
+    Auto,
+    Disable,
+    Enable,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+    println!("{:?}", args);
+
+    let pty_mode = if args.disable_pty {
+        debug_assert!(!args.force_enable_pty);
+        PtyMode::Disable
+    } else if args.force_enable_pty {
+        PtyMode::Enable
+    } else {
+        PtyMode::Auto
+    };
+
+    let allocate_pty = match pty_mode {
+        PtyMode::Auto => true, // TODO: fix
+        PtyMode::Enable => true,
+        PtyMode::Disable => false,
+    };
+
     let mut exe = env::current_exe()?.canonicalize()?;
     let _ = exe.pop();
     exe.push("rsrs-remote");
@@ -25,14 +64,21 @@ async fn main() -> Result<()> {
         .stderr(Stdio::piped())
         .spawn()?;
 
-    let raw = Arc::new(Mutex::new(RawMode::new()?));
+    let raw = if allocate_pty {
+        Some(RawMode::new()?)
+    } else {
+        None
+    };
+    let raw = Arc::new(Mutex::new(raw));
     {
         let raw = raw.clone();
         let saved_hook = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
             let mut raw = raw.lock();
-            raw.leave().expect("failed to restore terminal mode");
-            eprintln!("escaped from raw mode");
+            if let Some(raw) = &mut *raw {
+                raw.leave().expect("failed to restore terminal mode");
+                eprintln!("escaped from raw mode");
+            }
             saved_hook(info);
         }));
     }
@@ -88,7 +134,11 @@ async fn main() -> Result<()> {
         .await?;
     handler_tx
         .send(protocol::Command::Send(protocol::RemoteCommand::Spawn(
-            protocol::Spawn { id, env_vars },
+            protocol::Spawn {
+                id,
+                allocate_pty,
+                env_vars,
+            },
         )))
         .await?;
     // FIXME: create a dedicated therad for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
@@ -100,7 +150,9 @@ async fn main() -> Result<()> {
         .await?;
 
     let remote_status = status_rx.await?;
-    raw.lock().leave()?;
+    if let Some(raw) = &mut *raw.lock() {
+        raw.leave()?;
+    }
 
     match remote_status.status {
         protocol::ExitStatus::Code(code) => eprintln!("remote process exited with {}", code),

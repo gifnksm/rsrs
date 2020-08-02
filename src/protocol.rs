@@ -43,6 +43,7 @@ pub struct SetEnv {
 pub struct Spawn {
     pub id: Id,
     pub env_vars: Vec<(OsString, OsString)>,
+    pub allocate_pty: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
