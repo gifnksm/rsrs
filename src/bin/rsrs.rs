@@ -6,6 +6,10 @@ use tokio::{io::BufReader, prelude::*, process::Command};
 type Error = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, Error>;
 
+// TODO: add tracing
+// TODO: set terminal window size/termios
+// TODO: argument parsing
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut exe = env::current_exe()?.canonicalize()?;
@@ -87,6 +91,7 @@ async fn main() -> Result<()> {
             protocol::Spawn { id, env_vars },
         )))
         .await?;
+    // FIXME: create a dedicated therad for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
     handler_tx
         .send(protocol::Command::Source(protocol::Source {
             id,
