@@ -52,6 +52,21 @@ async fn main() -> Result<()> {
         }
     });
 
+    // forward special env vars
+    let mut env_vars = vec![];
+    let derive_envs = &["RUST_BACKTRACE", "RUST_LOG"];
+    for key in derive_envs {
+        if let Some(value) = env::var_os(key) {
+            env_vars.push((OsStr::new(key).to_owned(), value));
+        }
+    }
+    handler_tx
+        .send(protocol::Command::Send(protocol::RemoteCommand::SetEnv(
+            protocol::SetEnv { env_vars },
+        )))
+        .await?;
+
+    // Spawn command
     let id = router::lock().new_id();
     let status_rx = router::lock().insert_status_notifier(id).unwrap();
     let channel_rx = router::lock().insert_channel(id).unwrap();

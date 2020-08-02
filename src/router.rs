@@ -10,7 +10,7 @@ use once_cell::sync::Lazy;
 use parking_lot::{Mutex, MutexGuard};
 use std::{
     collections::{hash_map::Entry, HashMap},
-    io,
+    env, io,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -205,6 +205,12 @@ async fn router(
     while let Some(command) = rx.next().await {
         match command {
             protocol::Command::Recv(remote) => match remote {
+                protocol::RemoteCommand::SetEnv(set_env) => {
+                    for (k, v) in set_env.env_vars {
+                        eprintln!("{}={}", k.to_str().unwrap(), v.to_str().unwrap());
+                        env::set_var(k, v);
+                    }
+                }
                 protocol::RemoteCommand::Spawn(spawn) => {
                     let rx = ROUTER
                         .lock()

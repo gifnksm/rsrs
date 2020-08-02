@@ -19,6 +19,7 @@ impl Id {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum RemoteCommand {
+    SetEnv(SetEnv),
     Spawn(Spawn),
     Output(Output),
     ProcessExit(ProcessExitStatus),
@@ -31,6 +32,11 @@ pub enum Command {
     Send(RemoteCommand),
     Source(Source),
     Sink(Sink),
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct SetEnv {
+    pub env_vars: Vec<(OsString, OsString)>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
