@@ -40,8 +40,15 @@ pub struct SetEnv {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum SpawnCommand {
+    LoginShell,
+    Program(OsString, Vec<OsString>),
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Spawn {
     pub id: Id,
+    pub command: SpawnCommand,
     pub env_vars: Vec<(OsString, OsString)>,
     pub allocate_pty: bool,
 }

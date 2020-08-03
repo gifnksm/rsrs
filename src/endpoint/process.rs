@@ -17,25 +17,32 @@ use tokio_pty_command::{CommandExt as _, PtyMaster};
 pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<()> {
     let protocol::Spawn {
         id,
+        command,
         env_vars,
         allocate_pty,
     } = spawn;
 
-    let shell = if let Some(passwd) = Passwd::current_user()? {
-        OsString::from(passwd.shell.to_str()?)
-    } else if let Some(shell) = env::var_os("SHELL") {
-        shell
-    } else {
-        panic!("cannot get login shell for the user");
+    let (program, args, arg0) = match command {
+        protocol::SpawnCommand::LoginShell => {
+            let shell = if let Some(passwd) = Passwd::current_user()? {
+                OsString::from(passwd.shell.to_str()?)
+            } else if let Some(shell) = env::var_os("SHELL") {
+                shell
+            } else {
+                panic!("cannot get login shell for the user");
+            };
+            let arg0 = {
+                let mut arg0 = OsString::from("-");
+                arg0.push(&shell);
+                Some(arg0)
+            };
+            (shell, vec![], arg0)
+        }
+        protocol::SpawnCommand::Program(program, args) => (program, args, None),
     };
 
-    let arg0 = {
-        let mut arg0 = OsString::from("-");
-        arg0.push(&shell);
-        Some(arg0)
-    };
-
-    let mut std_command = StdCommand::new(shell);
+    let mut std_command = StdCommand::new(program);
+    std_command.args(args);
     if let Some(arg0) = arg0 {
         std_command.arg0(arg0);
     }

@@ -31,21 +31,37 @@ fn leave_raw_mode(orig: Termios) -> Result<()> {
     Ok(())
 }
 
+#[derive(Default)]
 pub struct RawMode {
     orig: Option<Termios>,
 }
 
 impl RawMode {
-    pub fn new() -> Result<Self> {
-        let orig = Some(enter_raw_mode()?);
-        Ok(RawMode { orig })
+    pub fn new() -> Self {
+        Default::default()
     }
 
-    pub fn leave(&mut self) -> Result<()> {
+    pub fn is_raw_mode(&self) -> bool {
+        self.orig.is_some()
+    }
+
+    pub fn enter(&mut self) -> Result<bool> {
+        if self.orig.is_none() {
+            let orig = Some(enter_raw_mode()?);
+            self.orig = orig;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn leave(&mut self) -> Result<bool> {
         if let Some(orig) = self.orig.take() {
             leave_raw_mode(orig)?;
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        Ok(())
     }
 }
 

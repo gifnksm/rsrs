@@ -1,7 +1,13 @@
 use clap::derive::Clap as _;
 use parking_lot::Mutex;
 use rsrs::{protocol, router, terminal::RawMode};
-use std::{env, ffi::OsStr, panic, process::Stdio, sync::Arc};
+use std::{
+    env,
+    ffi::{OsStr, OsString},
+    panic,
+    process::Stdio,
+    sync::Arc,
+};
 use tokio::{io::BufReader, prelude::*, process::Command};
 use tracing::{debug, trace};
 use tracing_subscriber::EnvFilter;
@@ -15,12 +21,23 @@ struct Args {
     /// Disable pseudo-terminal allocation.
     #[clap(name = "disable-pty", short = "T", overrides_with = "force-enable-pty")]
     disable_pty: bool,
+
     /// Force pseudo-terminal allocation.
     ///
     /// This can be used to execute arbitrary screen-based programs on a remote machine,
     /// which can be very useful, e.g. when implementing menu services.
     #[clap(name = "force-enable-pty", short = "t", overrides_with = "disable-pty")]
     force_enable_pty: bool,
+
+    /// Do not execute a remote command.
+    ///
+    /// This is useful for just forwarding ports.
+    #[clap(name = "no-remote-command", short = "N")]
+    no_remote_command: bool,
+
+    /// Commands to executed on a remote machine.
+    #[clap(name = "command")]
+    command: Vec<OsString>,
 }
 
 // TODO: set terminal window size/termios
@@ -43,6 +60,17 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     trace!(args = ?args);
 
+    let spawn_command = if args.no_remote_command {
+        None
+    } else if args.command.is_empty() {
+        Some(protocol::SpawnCommand::LoginShell)
+    } else {
+        Some(protocol::SpawnCommand::Program(
+            args.command[0].clone(),
+            args.command[1..].into(),
+        ))
+    };
+
     let pty_mode = if args.disable_pty {
         debug_assert!(!args.force_enable_pty);
         PtyMode::Disable
@@ -53,7 +81,7 @@ async fn main() -> Result<()> {
     };
 
     let allocate_pty = match pty_mode {
-        PtyMode::Auto => true, // TODO: fix
+        PtyMode::Auto => matches!(spawn_command, Some(protocol::SpawnCommand::LoginShell)),
         PtyMode::Enable => true,
         PtyMode::Disable => false,
     };
@@ -71,20 +99,13 @@ async fn main() -> Result<()> {
         .stderr(Stdio::piped())
         .spawn()?;
 
-    trace!("entering raw mode");
-    let raw = if allocate_pty {
-        Some(RawMode::new()?)
-    } else {
-        None
-    };
-    let raw = Arc::new(Mutex::new(raw));
+    let raw = Arc::new(Mutex::new(RawMode::new()));
     {
         let raw = raw.clone();
         let saved_hook = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
-            let mut raw = raw.lock();
-            if let Some(raw) = &mut *raw {
-                raw.leave().expect("failed to restore terminal mode");
+            let left = raw.lock().leave().expect("failed to restore terminal mode");
+            if left {
                 trace!("escaped from raw mode");
             }
             saved_hook(info);
@@ -99,16 +120,24 @@ async fn main() -> Result<()> {
     let reader = protocol::RemoteCommand::new_reader(remote_stdout);
     let writer = protocol::RemoteCommand::new_writer(remote_stdin);
 
-    router::spawn(protocol::ProcessKind::Local, reader, writer);
+    let router = router::spawn(protocol::ProcessKind::Local, reader, writer);
 
     let mut handler_tx = router::lock().handler_tx();
 
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(remote_stderr).lines();
-        while let Some(line) = lines.next_line().await.unwrap() {
-            eprintln!("{}\r", line);
-        }
-    });
+    {
+        let raw = raw.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(remote_stderr).lines();
+            while let Some(line) = lines.next_line().await.unwrap() {
+                let is_raw_mode = raw.lock().is_raw_mode();
+                if is_raw_mode {
+                    eprintln!("{}\r", line);
+                } else {
+                    eprintln!("{}", line);
+                }
+            }
+        });
+    }
 
     // forward special env vars
     let mut env_vars = vec![];
@@ -125,44 +154,53 @@ async fn main() -> Result<()> {
         .await?;
 
     // Spawn command
-    let id = router::lock().new_id();
-    let status_rx = router::lock().insert_status_notifier(id).unwrap();
-    let channel_rx = router::lock().insert_channel(id).unwrap();
-    let mut env_vars = vec![];
-    if let Some(term) = env::var_os("TERM") {
-        env_vars.push((OsStr::new("TERM").to_owned(), term));
-    }
+    if let Some(command) = spawn_command {
+        if allocate_pty {
+            trace!("entering raw mode");
+            raw.lock().enter()?;
+        }
 
-    handler_tx
-        .send(protocol::Command::Sink(protocol::Sink {
-            id,
-            rx: channel_rx,
-            stream: Box::new(io::stdout()),
-        }))
-        .await?;
-    handler_tx
-        .send(protocol::Command::Send(protocol::RemoteCommand::Spawn(
-            protocol::Spawn {
+        let id = router::lock().new_id();
+        let status_rx = router::lock().insert_status_notifier(id).unwrap();
+        let channel_rx = router::lock().insert_channel(id).unwrap();
+        let mut env_vars = vec![];
+        if allocate_pty {
+            if let Some(term) = env::var_os("TERM") {
+                env_vars.push((OsStr::new("TERM").to_owned(), term));
+            }
+        }
+
+        handler_tx
+            .send(protocol::Command::Sink(protocol::Sink {
                 id,
-                allocate_pty,
-                env_vars,
-            },
-        )))
-        .await?;
-    // FIXME: create a dedicated thread for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
-    handler_tx
-        .send(protocol::Command::Source(protocol::Source {
-            id,
-            stream: Box::new(io::stdin()),
-        }))
-        .await?;
+                rx: channel_rx,
+                stream: Box::new(io::stdout()),
+            }))
+            .await?;
+        handler_tx
+            .send(protocol::Command::Send(protocol::RemoteCommand::Spawn(
+                protocol::Spawn {
+                    id,
+                    command,
+                    allocate_pty,
+                    env_vars,
+                },
+            )))
+            .await?;
+        // FIXME: create a dedicated thread for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
+        handler_tx
+            .send(protocol::Command::Source(protocol::Source {
+                id,
+                stream: Box::new(io::stdin()),
+            }))
+            .await?;
 
-    let remote_status = status_rx.await?;
-    if let Some(raw) = &mut *raw.lock() {
-        raw.leave()?;
+        let remote_status = status_rx.await?;
+        raw.lock().leave()?;
+        debug!(status = ?remote_status.status, "remote process exited");
+    } else {
+        router.await?;
     }
-
-    debug!(status = ?remote_status.status, "remote process exited");
 
     handler_tx
         .send(protocol::Command::Send(protocol::RemoteCommand::Exit))
