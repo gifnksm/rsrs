@@ -1,4 +1,5 @@
 use clap::derive::Clap as _;
+use nix::{libc, unistd};
 use parking_lot::Mutex;
 use rsrs::{protocol, router, terminal::RawMode};
 use std::{
@@ -9,7 +10,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{io::BufReader, prelude::*, process::Command};
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
 type Error = Box<dyn std::error::Error>;
@@ -26,8 +27,15 @@ struct Args {
     ///
     /// This can be used to execute arbitrary screen-based programs on a remote machine,
     /// which can be very useful, e.g. when implementing menu services.
-    #[clap(name = "force-enable-pty", short = "t", overrides_with = "disable-pty")]
-    force_enable_pty: bool,
+    ///
+    /// Multiple `-t` options force tty allocation, even if `ssh` has no local tty.
+    #[clap(
+        name = "force-enable-pty",
+        short = "t",
+        overrides_with = "disable-pty",
+        parse(from_occurrences)
+    )]
+    force_enable_pty: u32,
 
     /// Do not execute a remote command.
     ///
@@ -72,19 +80,25 @@ async fn main() -> Result<()> {
     };
 
     let pty_mode = if args.disable_pty {
-        debug_assert!(!args.force_enable_pty);
+        debug_assert_eq!(args.force_enable_pty, 0);
         PtyMode::Disable
-    } else if args.force_enable_pty {
+    } else if args.force_enable_pty > 0 {
         PtyMode::Enable
     } else {
         PtyMode::Auto
     };
 
-    let allocate_pty = match pty_mode {
+    let mut allocate_pty = match pty_mode {
         PtyMode::Auto => matches!(spawn_command, Some(protocol::SpawnCommand::LoginShell)),
         PtyMode::Enable => true,
         PtyMode::Disable => false,
     };
+
+    let has_local_tty = unistd::isatty(libc::STDIN_FILENO)?;
+    if args.force_enable_pty < 2 && allocate_pty && !has_local_tty {
+        warn!("Pseudo-terminal will not be allocated because stdin is not a terminal.");
+        allocate_pty = false;
+    }
 
     let mut exe = env::current_exe()?.canonicalize()?;
     let _ = exe.pop();
@@ -99,7 +113,7 @@ async fn main() -> Result<()> {
         .stderr(Stdio::piped())
         .spawn()?;
 
-    let raw = Arc::new(Mutex::new(RawMode::new()));
+    let raw = Arc::new(Mutex::new(RawMode::new(libc::STDIN_FILENO)));
     {
         let raw = raw.clone();
         let saved_hook = panic::take_hook();
@@ -155,7 +169,7 @@ async fn main() -> Result<()> {
 
     // Spawn command
     if let Some(command) = spawn_command {
-        if allocate_pty {
+        if has_local_tty && allocate_pty {
             trace!("entering raw mode");
             raw.lock().enter()?;
         }

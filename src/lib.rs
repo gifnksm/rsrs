@@ -4,6 +4,7 @@ use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
 use tokio_util::codec::{self, LengthDelimitedCodec};
 
 mod endpoint;
+mod ioctl;
 pub mod protocol;
 pub mod router;
 pub mod terminal;
