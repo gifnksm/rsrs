@@ -3,6 +3,8 @@ use parking_lot::Mutex;
 use rsrs::{protocol, router, terminal::RawMode};
 use std::{env, ffi::OsStr, panic, process::Stdio, sync::Arc};
 use tokio::{io::BufReader, prelude::*, process::Command};
+use tracing::{debug, trace};
+use tracing_subscriber::EnvFilter;
 
 type Error = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, Error>;
@@ -21,7 +23,6 @@ struct Args {
     force_enable_pty: bool,
 }
 
-// TODO: add tracing
 // TODO: set terminal window size/termios
 
 #[derive(Debug)]
@@ -33,8 +34,14 @@ pub enum PtyMode {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("no global subscriber has been set");
+
     let args = Args::parse();
-    println!("{:?}", args);
+    trace!(args = ?args);
 
     let pty_mode = if args.disable_pty {
         debug_assert!(!args.force_enable_pty);
@@ -64,6 +71,7 @@ async fn main() -> Result<()> {
         .stderr(Stdio::piped())
         .spawn()?;
 
+    trace!("entering raw mode");
     let raw = if allocate_pty {
         Some(RawMode::new()?)
     } else {
@@ -77,7 +85,7 @@ async fn main() -> Result<()> {
             let mut raw = raw.lock();
             if let Some(raw) = &mut *raw {
                 raw.leave().expect("failed to restore terminal mode");
-                eprintln!("escaped from raw mode");
+                trace!("escaped from raw mode");
             }
             saved_hook(info);
         }));
@@ -141,7 +149,7 @@ async fn main() -> Result<()> {
             },
         )))
         .await?;
-    // FIXME: create a dedicated therad for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
+    // FIXME: create a dedicated thread for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
     handler_tx
         .send(protocol::Command::Source(protocol::Source {
             id,
@@ -154,23 +162,14 @@ async fn main() -> Result<()> {
         raw.leave()?;
     }
 
-    match remote_status.status {
-        protocol::ExitStatus::Code(code) => eprintln!("remote process exited with {}", code),
-        protocol::ExitStatus::Signal(signal) => {
-            eprintln!("remote process exited with signal {}", signal)
-        }
-    }
+    debug!(status = ?remote_status.status, "remote process exited");
 
     handler_tx
         .send(protocol::Command::Send(protocol::RemoteCommand::Exit))
         .await?;
 
     let status = status.await?;
-
-    match status.code() {
-        Some(code) => eprintln!("local process exited with {}", code),
-        None => eprintln!("local process terminated by signal"),
-    }
+    debug!(status = ?protocol::ExitStatus::from(status), "local process exited");
 
     Ok(())
 }

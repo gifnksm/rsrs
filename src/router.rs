@@ -207,7 +207,6 @@ async fn router(
             protocol::Command::Recv(remote) => match remote {
                 protocol::RemoteCommand::SetEnv(set_env) => {
                     for (k, v) in set_env.env_vars {
-                        eprintln!("{}={}", k.to_str().unwrap(), v.to_str().unwrap());
                         env::set_var(k, v);
                     }
                 }
