@@ -9,10 +9,18 @@ pub(crate) async fn run(sink: protocol::Sink) -> Result<()> {
         mut stream,
     } = sink;
 
-    while let Some(output) = rx.next().await {
+    while let Some(data) = rx.next().await {
         // FIXME: error handling
-        stream.write_all(&output.data[..]).await?;
-        stream.flush().await?;
+        match data {
+            protocol::ChannelData::Output(data) => {
+                stream.write_all(&data[..]).await?;
+                stream.flush().await?;
+            }
+            protocol::ChannelData::Shutdown => {
+                stream.shutdown().await?;
+                break;
+            }
+        }
     }
 
     Ok(())

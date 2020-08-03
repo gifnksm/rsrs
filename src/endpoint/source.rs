@@ -12,12 +12,20 @@ pub(crate) async fn run(source: protocol::Source) -> Result<()> {
             break;
         }
 
-        let frame = protocol::Command::Send(protocol::RemoteCommand::Output(protocol::Output {
-            id,
-            data: buf[..n].into(),
-        }));
+        let frame =
+            protocol::Command::Send(protocol::RemoteCommand::Channel(protocol::ChannelCommand {
+                id,
+                data: protocol::ChannelData::Output(buf[..n].into()),
+            }));
         tx.send(frame).await?;
     }
+
+    let frame =
+        protocol::Command::Send(protocol::RemoteCommand::Channel(protocol::ChannelCommand {
+            id,
+            data: protocol::ChannelData::Shutdown,
+        }));
+    tx.send(frame).await?;
 
     Ok(())
 }

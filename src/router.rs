@@ -27,7 +27,7 @@ pub struct Router {
     id: usize,
     handler_tx: Option<mpsc::Sender<protocol::Command>>,
     channel_id_map: HashMap<protocol::Id, Index>,
-    channels: Arena<(protocol::Id, mpsc::Sender<protocol::Output>)>,
+    channels: Arena<(protocol::Id, mpsc::Sender<protocol::ChannelData>)>,
     status_id_map: HashMap<protocol::Id, Index>,
     status_notifiers: Arena<(protocol::Id, oneshot::Sender<protocol::ProcessExitStatus>)>,
 }
@@ -61,7 +61,7 @@ impl Router {
     fn remove_channel(
         &mut self,
         index: Index,
-    ) -> Option<(protocol::Id, mpsc::Sender<protocol::Output>)> {
+    ) -> Option<(protocol::Id, mpsc::Sender<protocol::ChannelData>)> {
         self.channels.remove(index).map(|(id, tx)| {
             let _ = self
                 .channel_id_map
@@ -74,7 +74,7 @@ impl Router {
     fn get_channel(
         &mut self,
         id: protocol::Id,
-    ) -> Option<(protocol::Id, mpsc::Sender<protocol::Output>)> {
+    ) -> Option<(protocol::Id, mpsc::Sender<protocol::ChannelData>)> {
         let channels = &mut self.channels;
         self.channel_id_map
             .get(&id)
@@ -135,11 +135,11 @@ pub fn lock() -> MutexGuard<'static, Router> {
 #[derive(Debug)]
 pub struct ChannelReceiver {
     index: Index,
-    rx: mpsc::Receiver<protocol::Output>,
+    rx: mpsc::Receiver<protocol::ChannelData>,
 }
 
 impl Stream for ChannelReceiver {
-    type Item = protocol::Output;
+    type Item = protocol::ChannelData;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.rx).poll_next(cx)
@@ -220,10 +220,10 @@ async fn router(
                         let _ = endpoint::process::run(rx, spawn).await;
                     });
                 }
-                protocol::RemoteCommand::Output(output) => {
-                    let chan_tx = ROUTER.lock().get_channel(output.id);
+                protocol::RemoteCommand::Channel(protocol::ChannelCommand { id, data }) => {
+                    let chan_tx = ROUTER.lock().get_channel(id);
                     if let Some((_, mut tx)) = chan_tx {
-                        tx.send(output).await?;
+                        tx.send(data).await?;
                     }
                 }
                 protocol::RemoteCommand::ProcessExit(status) => {

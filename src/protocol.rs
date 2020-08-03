@@ -21,7 +21,7 @@ impl Id {
 pub enum RemoteCommand {
     SetEnv(SetEnv),
     Spawn(Spawn),
-    Output(Output),
+    Channel(ChannelCommand),
     ProcessExit(ProcessExitStatus),
     Exit,
 }
@@ -54,9 +54,15 @@ pub struct Spawn {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Output {
+pub struct ChannelCommand {
     pub id: Id,
-    pub data: Vec<u8>,
+    pub data: ChannelData,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum ChannelData {
+    Output(Vec<u8>),
+    Shutdown,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
