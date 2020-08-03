@@ -9,8 +9,8 @@ use std::{
     sync::Arc,
 };
 use tokio::{io::BufReader, prelude::*, process::Command};
-use tracing::{debug, trace};
-use tracing_subscriber::EnvFilter;
+use tracing::{debug, info, trace};
+use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
 type Error = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, Error>;
@@ -52,7 +52,7 @@ pub enum PtyMode {
 #[tokio::main]
 async fn main() -> Result<()> {
     let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into()))
         .with_writer(std::io::stderr)
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("no global subscriber has been set");
@@ -197,7 +197,7 @@ async fn main() -> Result<()> {
 
         let remote_status = status_rx.await?;
         raw.lock().leave()?;
-        debug!(status = ?remote_status.status, "remote process exited");
+        info!(status = ?remote_status.status, "remote process exited");
     } else {
         router.await?;
     }
