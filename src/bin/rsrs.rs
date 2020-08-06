@@ -1,7 +1,10 @@
 use clap::derive::Clap as _;
 use nix::{libc, unistd};
 use parking_lot::Mutex;
-use rsrs::{protocol, router, terminal::RawMode};
+use rsrs::{
+    protocol, router,
+    terminal::{self, RawMode},
+};
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -48,7 +51,7 @@ struct Args {
     command: Vec<OsString>,
 }
 
-// TODO: set terminal window size/termios
+// TODO: updated terminal window size when SIGWINCH received
 
 #[derive(Debug)]
 pub enum PtyMode {
@@ -178,11 +181,17 @@ async fn main() -> Result<()> {
         let status_rx = router::lock().insert_status_notifier(id).unwrap();
         let channel_rx = router::lock().insert_channel(id).unwrap();
         let mut env_vars = vec![];
-        if allocate_pty {
+        let pty = if allocate_pty {
             if let Some(term) = env::var_os("TERM") {
                 env_vars.push((OsStr::new("TERM").to_owned(), term));
             }
-        }
+
+            let (width, height) = terminal::get_window_size(libc::STDIN_FILENO)?;
+
+            Some(protocol::PtyParam { width, height })
+        } else {
+            None
+        };
 
         handler_tx
             .send(protocol::Command::Sink(protocol::Sink {
@@ -196,7 +205,7 @@ async fn main() -> Result<()> {
                 protocol::Spawn {
                     id,
                     command,
-                    allocate_pty,
+                    pty,
                     env_vars,
                 },
             )))

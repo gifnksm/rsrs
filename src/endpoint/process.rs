@@ -1,14 +1,16 @@
 use crate::{
     protocol,
     router::{self, ChannelReceiver},
-    Result,
+    terminal, Result,
 };
 use etc_passwd::Passwd;
+use nix::libc;
 use std::{
     env,
     ffi::OsString,
+    fs::OpenOptions,
     future::Future,
-    os::unix::process::CommandExt,
+    os::unix::{fs::OpenOptionsExt, io::AsRawFd, process::CommandExt},
     process::{Command as StdCommand, Stdio},
 };
 use tokio::{prelude::*, process::Command};
@@ -19,7 +21,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
         id,
         command,
         env_vars,
-        allocate_pty,
+        pty,
     } = spawn;
 
     let (program, args, arg0) = match command {
@@ -48,8 +50,17 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
     }
     std_command.envs(env_vars);
 
-    let (status, child_stdin, child_stdout) = if allocate_pty {
+    let (status, child_stdin, child_stdout) = if let Some(param) = pty {
         let pty_master = PtyMaster::open()?;
+        {
+            let slave = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NOCTTY)
+                .open(pty_master.slave_name())?;
+            terminal::set_window_size(slave.as_raw_fd(), param.width, param.height)?;
+        }
+
         let child = Command::from(std_command).spawn_with_pty(&pty_master)?;
         let (child_stdout, child_stdin) = io::split(pty_master);
         (

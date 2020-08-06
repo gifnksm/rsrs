@@ -50,7 +50,13 @@ pub struct Spawn {
     pub id: Id,
     pub command: SpawnCommand,
     pub env_vars: Vec<(OsString, OsString)>,
-    pub allocate_pty: bool,
+    pub pty: Option<PtyParam>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PtyParam {
+    pub width: u16,
+    pub height: u16,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
