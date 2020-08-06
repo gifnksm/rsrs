@@ -219,6 +219,9 @@ async fn main() -> Result<()> {
     handler_tx
         .send(protocol::Command::Send(protocol::RemoteCommand::Exit))
         .await?;
+    handler_tx
+        .send(protocol::Command::Recv(protocol::RemoteCommand::Exit))
+        .await?;
 
     let status = status.await?;
     debug!(status = ?protocol::ExitStatus::from(status), "local process exited");
