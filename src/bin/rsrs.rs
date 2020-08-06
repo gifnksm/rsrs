@@ -1,4 +1,5 @@
 use clap::derive::Clap as _;
+use futures_util::stream::StreamExt as _;
 use nix::{libc, unistd};
 use parking_lot::Mutex;
 use rsrs::{
@@ -12,7 +13,12 @@ use std::{
     process::Stdio,
     sync::Arc,
 };
-use tokio::{io::BufReader, prelude::*, process::Command};
+use tokio::{
+    io::BufReader,
+    prelude::*,
+    process::Command,
+    signal::unix::{signal, SignalKind},
+};
 use tracing::{debug, info, trace, warn};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
@@ -50,8 +56,6 @@ struct Args {
     #[clap(name = "command")]
     command: Vec<OsString>,
 }
-
-// TODO: updated terminal window size when SIGWINCH received
 
 #[derive(Debug)]
 pub enum PtyMode {
@@ -180,6 +184,26 @@ async fn main() -> Result<()> {
         let id = router::lock().new_id();
         let status_rx = router::lock().insert_status_notifier(id).unwrap();
         let channel_rx = router::lock().insert_channel(id).unwrap();
+
+        {
+            let mut handler_tx = handler_tx.clone();
+            tokio::spawn(async move {
+                let mut stream = signal(SignalKind::window_change()).unwrap();
+                while let Some(()) = stream.next().await {
+                    let (width, height) = terminal::get_window_size(libc::STDIN_FILENO).unwrap();
+                    handler_tx
+                        .send(protocol::Command::Send(protocol::RemoteCommand::Channel(
+                            protocol::ChannelCommand {
+                                id,
+                                data: protocol::ChannelData::WindowSizeChange(width, height),
+                            },
+                        )))
+                        .await
+                        .unwrap();
+                }
+            });
+        }
+
         let mut env_vars = vec![];
         let pty = if allocate_pty {
             if let Some(term) = env::var_os("TERM") {
@@ -187,7 +211,6 @@ async fn main() -> Result<()> {
             }
 
             let (width, height) = terminal::get_window_size(libc::STDIN_FILENO)?;
-
             Some(protocol::PtyParam { width, height })
         } else {
             None
@@ -198,6 +221,7 @@ async fn main() -> Result<()> {
                 id,
                 rx: channel_rx,
                 stream: Box::new(io::stdout()),
+                pty_name: None,
             }))
             .await?;
         handler_tx

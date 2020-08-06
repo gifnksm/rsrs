@@ -68,6 +68,7 @@ pub struct ChannelCommand {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum ChannelData {
     Output(Vec<u8>),
+    WindowSizeChange(u16, u16),
     Shutdown,
 }
 
@@ -108,4 +109,5 @@ pub struct Sink {
     pub rx: router::ChannelReceiver,
     #[debug(skip)]
     pub stream: Box<dyn AsyncWrite + Send + Unpin>,
+    pub pty_name: Option<String>,
 }

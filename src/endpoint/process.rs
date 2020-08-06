@@ -50,20 +50,22 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
     }
     std_command.envs(env_vars);
 
-    let (status, child_stdin, child_stdout) = if let Some(param) = pty {
+    let (pty_name, status, child_stdin, child_stdout) = if let Some(param) = pty {
         let pty_master = PtyMaster::open()?;
+        let slave_name = pty_master.slave_name().to_string();
         {
             let slave = OpenOptions::new()
                 .read(true)
                 .write(true)
                 .custom_flags(libc::O_NOCTTY)
-                .open(pty_master.slave_name())?;
+                .open(&slave_name)?;
             terminal::set_window_size(slave.as_raw_fd(), param.width, param.height)?;
         }
 
         let child = Command::from(std_command).spawn_with_pty(&pty_master)?;
         let (child_stdout, child_stdin) = io::split(pty_master);
         (
+            Some(slave_name),
             Box::new(child)
                 as Box<dyn Future<Output = io::Result<std::process::ExitStatus>> + Send + Unpin>,
             Box::new(child_stdin) as Box<dyn AsyncWrite + Send + Unpin>,
@@ -79,6 +81,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
         let child_stdout = child.stdout.take().unwrap();
 
         (
+            None,
             Box::new(child) as _,
             Box::new(child_stdin) as _,
             Box::new(child_stdout) as _,
@@ -92,6 +95,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
             id,
             rx,
             stream: child_stdin,
+            pty_name,
         }))
         .await?;
 
