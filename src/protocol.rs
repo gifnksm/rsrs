@@ -2,6 +2,8 @@ use crate::router;
 use std::{ffi::OsString, os::unix::process::ExitStatusExt as _};
 use tokio::prelude::*;
 
+pub(crate) const MAGIC: &[u8] = b"\0RSRS\0magic\0number\0";
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) enum ProcessKind {
     Local,
