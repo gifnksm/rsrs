@@ -1,3 +1,4 @@
+use super::GlobalOpts;
 use crate::{
     protocol, router,
     terminal::{self, RawMode},
@@ -23,7 +24,7 @@ use tracing::{debug, info, trace, warn};
 
 /// Starts remote login client
 #[derive(Debug, clap::Clap)]
-pub(crate) struct Args {
+pub(super) struct Opts {
     /// Disable pseudo-terminal allocation.
     #[clap(name = "disable-pty", short = "T", overrides_with = "force-enable-pty")]
     disable_pty: bool,
@@ -54,28 +55,28 @@ pub(crate) struct Args {
 }
 
 #[derive(Debug)]
-pub(crate) enum PtyMode {
+enum PtyMode {
     Auto,
     Disable,
     Enable,
 }
 
-pub(crate) async fn run(args: Args) -> Result<()> {
-    let spawn_command = if args.no_remote_command {
+pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
+    let spawn_command = if opts.no_remote_command {
         None
-    } else if args.command.is_empty() {
+    } else if opts.command.is_empty() {
         Some(protocol::SpawnCommand::LoginShell)
     } else {
         Some(protocol::SpawnCommand::Program(
-            args.command[0].clone(),
-            args.command[1..].into(),
+            opts.command[0].clone(),
+            opts.command[1..].into(),
         ))
     };
 
-    let pty_mode = if args.disable_pty {
-        debug_assert_eq!(args.force_enable_pty, 0);
+    let pty_mode = if opts.disable_pty {
+        debug_assert_eq!(opts.force_enable_pty, 0);
         PtyMode::Disable
-    } else if args.force_enable_pty > 0 {
+    } else if opts.force_enable_pty > 0 {
         PtyMode::Enable
     } else {
         PtyMode::Auto
@@ -88,7 +89,7 @@ pub(crate) async fn run(args: Args) -> Result<()> {
     };
 
     let has_local_tty = unistd::isatty(libc::STDIN_FILENO)?;
-    if args.force_enable_pty < 2 && allocate_pty && !has_local_tty {
+    if opts.force_enable_pty < 2 && allocate_pty && !has_local_tty {
         warn!("Pseudo-terminal will not be allocated because stdin is not a terminal.");
         allocate_pty = false;
     }
