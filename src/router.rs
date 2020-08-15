@@ -22,7 +22,7 @@ use tokio::{
 static ROUTER: Lazy<Mutex<Router>> = Lazy::new(|| Mutex::new(Router::new()));
 
 #[derive(Debug)]
-pub struct Router {
+pub(crate) struct Router {
     kind: Option<protocol::ProcessKind>,
     id: usize,
     handler_tx: Option<mpsc::Sender<protocol::Command>>,
@@ -45,7 +45,7 @@ impl Router {
         }
     }
 
-    pub fn insert_channel(&mut self, id: protocol::Id) -> Option<ChannelReceiver> {
+    pub(crate) fn insert_channel(&mut self, id: protocol::Id) -> Option<ChannelReceiver> {
         match self.channel_id_map.entry(id) {
             Entry::Vacant(e) => {
                 // FIXME: implement back-pressure
@@ -82,7 +82,7 @@ impl Router {
             .cloned()
     }
 
-    pub fn insert_status_notifier(&mut self, id: protocol::Id) -> Option<StatusReceiver> {
+    pub(crate) fn insert_status_notifier(&mut self, id: protocol::Id) -> Option<StatusReceiver> {
         match self.status_id_map.entry(id) {
             Entry::Vacant(e) => {
                 let (tx, rx) = oneshot::channel();
@@ -117,23 +117,23 @@ impl Router {
             .and_then(|index| notifiers.remove(index))
     }
 
-    pub fn handler_tx(&self) -> mpsc::Sender<protocol::Command> {
+    pub(crate) fn handler_tx(&self) -> mpsc::Sender<protocol::Command> {
         self.handler_tx.clone().unwrap()
     }
 
-    pub fn new_id(&mut self) -> protocol::Id {
+    pub(crate) fn new_id(&mut self) -> protocol::Id {
         let id = self.id;
         self.id += 1;
         protocol::Id::new(self.kind.unwrap(), id)
     }
 }
 
-pub fn lock() -> MutexGuard<'static, Router> {
+pub(crate) fn lock() -> MutexGuard<'static, Router> {
     ROUTER.lock()
 }
 
 #[derive(Debug)]
-pub struct ChannelReceiver {
+pub(crate) struct ChannelReceiver {
     index: Index,
     rx: mpsc::Receiver<protocol::ChannelData>,
 }
@@ -154,7 +154,7 @@ impl Drop for ChannelReceiver {
 }
 
 #[derive(Debug)]
-pub struct StatusReceiver {
+pub(crate) struct StatusReceiver {
     index: Index,
     rx: oneshot::Receiver<protocol::ProcessExitStatus>,
 }
@@ -253,7 +253,7 @@ async fn router(
     Ok(())
 }
 
-pub fn spawn(
+pub(crate) fn spawn(
     kind: protocol::ProcessKind,
     source: impl Stream<Item = io::Result<protocol::RemoteCommand>> + Send + 'static,
     sink: impl Sink<protocol::RemoteCommand, Error = io::Error> + Send + 'static,

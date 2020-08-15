@@ -3,13 +3,13 @@ use std::{ffi::OsString, os::unix::process::ExitStatusExt as _};
 use tokio::prelude::*;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum ProcessKind {
+pub(crate) enum ProcessKind {
     Local,
     Remote,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct Id(ProcessKind, usize);
+pub(crate) struct Id(ProcessKind, usize);
 
 impl Id {
     pub(crate) fn new(kind: ProcessKind, id: usize) -> Self {
@@ -18,7 +18,7 @@ impl Id {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum RemoteCommand {
+pub(crate) enum RemoteCommand {
     SetEnv(SetEnv),
     Spawn(Spawn),
     Channel(ChannelCommand),
@@ -27,7 +27,7 @@ pub enum RemoteCommand {
 }
 
 #[derive(Debug)]
-pub enum Command {
+pub(crate) enum Command {
     Recv(RemoteCommand),
     Send(RemoteCommand),
     Source(Source),
@@ -35,51 +35,51 @@ pub enum Command {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct SetEnv {
-    pub env_vars: Vec<(OsString, OsString)>,
+pub(crate) struct SetEnv {
+    pub(crate) env_vars: Vec<(OsString, OsString)>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum SpawnCommand {
+pub(crate) enum SpawnCommand {
     LoginShell,
     Program(OsString, Vec<OsString>),
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Spawn {
-    pub id: Id,
-    pub command: SpawnCommand,
-    pub env_vars: Vec<(OsString, OsString)>,
-    pub pty: Option<PtyParam>,
+pub(crate) struct Spawn {
+    pub(crate) id: Id,
+    pub(crate) command: SpawnCommand,
+    pub(crate) env_vars: Vec<(OsString, OsString)>,
+    pub(crate) pty: Option<PtyParam>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct PtyParam {
-    pub width: u16,
-    pub height: u16,
+pub(crate) struct PtyParam {
+    pub(crate) width: u16,
+    pub(crate) height: u16,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct ChannelCommand {
-    pub id: Id,
-    pub data: ChannelData,
+pub(crate) struct ChannelCommand {
+    pub(crate) id: Id,
+    pub(crate) data: ChannelData,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum ChannelData {
+pub(crate) enum ChannelData {
     Output(Vec<u8>),
     WindowSizeChange(u16, u16),
     Shutdown,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct ProcessExitStatus {
-    pub id: Id,
-    pub status: ExitStatus,
+pub(crate) struct ProcessExitStatus {
+    pub(crate) id: Id,
+    pub(crate) status: ExitStatus,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum ExitStatus {
+pub(crate) enum ExitStatus {
     Code(i32),
     Signal(i32),
 }
@@ -97,17 +97,17 @@ impl From<std::process::ExitStatus> for ExitStatus {
 }
 
 #[derive(custom_debug::Debug)]
-pub struct Source {
-    pub id: Id,
+pub(crate) struct Source {
+    pub(crate) id: Id,
     #[debug(skip)]
-    pub stream: Box<dyn AsyncRead + Send + Unpin>,
+    pub(crate) stream: Box<dyn AsyncRead + Send + Unpin>,
 }
 
 #[derive(custom_debug::Debug)]
-pub struct Sink {
-    pub id: Id,
-    pub rx: router::ChannelReceiver,
+pub(crate) struct Sink {
+    pub(crate) id: Id,
+    pub(crate) rx: router::ChannelReceiver,
     #[debug(skip)]
-    pub stream: Box<dyn AsyncWrite + Send + Unpin>,
-    pub pty_name: Option<String>,
+    pub(crate) stream: Box<dyn AsyncWrite + Send + Unpin>,
+    pub(crate) pty_name: Option<String>,
 }

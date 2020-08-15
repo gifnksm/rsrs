@@ -1,31 +1,22 @@
-use self::protocol::RemoteCommand;
+use crate::protocol::RemoteCommand;
 use tokio::prelude::*;
 use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
 use tokio_util::codec::{self, LengthDelimitedCodec};
 
-mod endpoint;
-mod ioctl;
-pub mod protocol;
-pub mod router;
-pub mod terminal;
-
-pub type Error = Box<dyn std::error::Error>;
-pub type Result<T> = std::result::Result<T, Error>;
-
-pub type FramedWrite<T> = SymmetricallyFramed<
+pub(crate) type FramedWrite<T> = SymmetricallyFramed<
     codec::FramedWrite<T, LengthDelimitedCodec>,
     RemoteCommand,
     SymmetricalBincode<RemoteCommand>,
 >;
 
-pub type FramedRead<T> = SymmetricallyFramed<
+pub(crate) type FramedRead<T> = SymmetricallyFramed<
     codec::FramedRead<T, LengthDelimitedCodec>,
     RemoteCommand,
     SymmetricalBincode<RemoteCommand>,
 >;
 
 impl RemoteCommand {
-    pub fn new_writer<T>(inner: T) -> FramedWrite<T>
+    pub(crate) fn new_writer<T>(inner: T) -> FramedWrite<T>
     where
         T: AsyncWrite,
     {
@@ -33,7 +24,7 @@ impl RemoteCommand {
         SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
     }
 
-    pub fn new_reader<T>(inner: T) -> FramedRead<T>
+    pub(crate) fn new_reader<T>(inner: T) -> FramedRead<T>
     where
         T: AsyncRead,
     {
@@ -42,6 +33,6 @@ impl RemoteCommand {
     }
 }
 
-fn nix2io(e: nix::Error) -> io::Error {
+pub(crate) fn nix2io(e: nix::Error) -> io::Error {
     e.as_errno().unwrap().into()
 }

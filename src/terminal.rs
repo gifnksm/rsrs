@@ -1,11 +1,11 @@
-use crate::{ioctl, nix2io};
+use crate::{common::nix2io, ioctl};
 use nix::{
     libc,
     sys::termios::{self, Termios},
 };
 use std::{mem, os::unix::io::RawFd};
 
-pub type Result<T> = std::result::Result<T, std::io::Error>;
+pub(crate) type Result<T> = std::result::Result<T, std::io::Error>;
 
 fn enter_raw_mode(fd: RawFd) -> Result<Termios> {
     use termios::{SetArg, SpecialCharacterIndices::*};
@@ -30,21 +30,21 @@ fn leave_raw_mode(fd: RawFd, orig: Termios) -> Result<()> {
     Ok(())
 }
 
-pub struct RawMode {
+pub(crate) struct RawMode {
     fd: RawFd,
     orig: Option<Termios>,
 }
 
 impl RawMode {
-    pub fn new(fd: RawFd) -> Self {
+    pub(crate) fn new(fd: RawFd) -> Self {
         Self { fd, orig: None }
     }
 
-    pub fn is_raw_mode(&self) -> bool {
+    pub(crate) fn is_raw_mode(&self) -> bool {
         self.orig.is_some()
     }
 
-    pub fn enter(&mut self) -> Result<bool> {
+    pub(crate) fn enter(&mut self) -> Result<bool> {
         if self.orig.is_none() {
             let orig = Some(enter_raw_mode(self.fd)?);
             self.orig = orig;
@@ -54,7 +54,7 @@ impl RawMode {
         }
     }
 
-    pub fn leave(&mut self) -> Result<bool> {
+    pub(crate) fn leave(&mut self) -> Result<bool> {
         if let Some(orig) = self.orig.take() {
             leave_raw_mode(self.fd, orig)?;
             Ok(true)
@@ -70,7 +70,7 @@ impl Drop for RawMode {
     }
 }
 
-pub fn get_window_size(fd: RawFd) -> Result<(u16, u16)> {
+pub(crate) fn get_window_size(fd: RawFd) -> Result<(u16, u16)> {
     let winsz = unsafe {
         let mut winsz = mem::zeroed();
         ioctl::tiocgwinsz(fd, &mut winsz).map_err(nix2io)?;
@@ -79,7 +79,7 @@ pub fn get_window_size(fd: RawFd) -> Result<(u16, u16)> {
     Ok((winsz.ws_col, winsz.ws_row))
 }
 
-pub fn set_window_size(fd: RawFd, w: u16, h: u16) -> Result<()> {
+pub(crate) fn set_window_size(fd: RawFd, w: u16, h: u16) -> Result<()> {
     let winsz = libc::winsize {
         ws_col: w,
         ws_row: h,
