@@ -5,6 +5,7 @@ use crate::{
     Result,
 };
 use futures_util::SinkExt as _;
+use nix::unistd;
 use passfd::tokio_02::FdPassingExt;
 use std::{ffi::OsString, fmt::Debug, os::unix::io::AsRawFd, process::Stdio};
 use tokio::{
@@ -37,12 +38,20 @@ pub(super) async fn run(global: GlobalOpts, local: Opts) -> Result<()> {
     let mut stream = UnixStream::connect(&sock_path).await?;
     debug!(peer_cred = ?stream.peer_cred(), "connected to server");
 
-    let mut child = Command::new(&local.command)
-        .args(&local.args)
+    let mut cmd = Command::new(&local.command);
+    cmd.args(&local.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    unsafe {
+        cmd.pre_exec(|| {
+            // become a session leader to detach controlling terminal
+            unistd::setsid().map_err(common::nix2io)?;
+            Ok(())
+        })
+    };
+
+    let mut child = cmd.spawn()?;
 
     launch_remote(&mut child).await?;
     delegate_fd(local, &mut stream, &mut child).await?;

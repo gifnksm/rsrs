@@ -7,6 +7,7 @@ use crate::{
     },
     Result,
 };
+use futures_util::SinkExt as _;
 use passfd::tokio_02::FdPassingExt;
 use std::{
     fs,
@@ -18,7 +19,6 @@ use tokio::{
     net::{UnixListener, UnixStream},
     stream::StreamExt as _,
 };
-use futures_util::SinkExt as _;
 use tracing::{debug, error, trace, warn};
 
 /// Launch RSRS daemon
@@ -111,25 +111,31 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
                 } = open;
 
                 let stdin = if has_stdin {
+                    trace!("waiting stdin file descriptor received");
                     let fd = reader.get_ref().get_ref().as_ref().recv_fd().await;
                     Some(fd)
                 } else {
                     None
                 };
                 let stdout = if has_stdout {
+                    trace!("waiting stdout file descriptor received");
                     let fd = reader.get_ref().get_ref().as_ref().recv_fd().await?;
                     Some(fd)
                 } else {
                     None
                 };
                 let stderr = if has_stderr {
+                    trace!("waiting stderr file descriptor received");
                     let fd = reader.get_ref().get_ref().as_ref().recv_fd().await?;
                     Some(fd)
                 } else {
                     None
                 };
 
+                trace!("sending response");
                 writer.send(Response::Ok).await?;
+
+                trace!("completed");
             }
         }
     }
