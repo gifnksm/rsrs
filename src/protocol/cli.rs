@@ -7,6 +7,7 @@ pub(crate) enum Request {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Open {
+    pub(crate) pid: u32,
     pub(crate) command: OsString,
     pub(crate) args: Vec<OsString>,
     pub(crate) has_stdin: bool,

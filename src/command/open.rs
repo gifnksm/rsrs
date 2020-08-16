@@ -116,6 +116,7 @@ async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) ->
     trace!("sending open request");
     writer
         .send(Request::Open(cli::Open {
+            pid: child.id(),
             command: local.command,
             args: local.args,
             has_stdin: child.stdin.is_some(),
