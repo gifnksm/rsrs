@@ -5,21 +5,21 @@ use crate::{
         self,
         cli::{self, Request, Response},
     },
-    Result,
+    Error, Result,
 };
+use color_eyre::eyre::{bail, ensure};
 use futures_util::SinkExt as _;
 use passfd::tokio_02::FdPassingExt;
 use std::{
     fs,
     io::{self, Write},
     os::unix::fs::FileTypeExt as _,
-    process,
 };
 use tokio::{
     net::{UnixListener, UnixStream},
     stream::StreamExt as _,
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Launch RSRS daemon
 #[derive(Debug, clap::Clap)]
@@ -36,28 +36,26 @@ pub(super) async fn run(global: GlobalOpts, local: Opts) -> Result<()> {
 
     if sock_path.exists() {
         let metadata = sock_path.metadata()?;
-        if !metadata.file_type().is_socket() {
-            error!(sock_path = %sock_path.display(), "failed to start daemon: socket_path is already exists and it it not a socket file.");
-            process::exit(1);
-        }
+        ensure!(
+            metadata.file_type().is_socket(),
+            "failed to start daemon: socket is already exists and it is not a socket file: {}",
+            sock_path.display()
+        );
 
         // Attempt to connect to the socket to determine if another server process is listening
         match UnixStream::connect(&sock_path).await {
             Ok(_stream) => {
-                error!(sock_path = %sock_path.display(),
-                        "failed to start daemon: another server process is running.");
-                process::exit(1);
+                bail!(
+                    "failed to start daemon: another server process is running on the socket: {}",
+                    sock_path.display()
+                );
             }
             Err(e) => match e.kind() {
                 io::ErrorKind::ConnectionRefused => {
                     debug!(sock_path = %sock_path.display(), error = %e,
                         "connection refused. maybe no server process is running");
                 }
-                _ => {
-                    error!(sock_path = %sock_path.display(), error = %e,
-                        "failed to start daemon: unexpected error occurred when connecting to the existing socket");
-                    process::exit(1);
-                }
+                _ => return Err(Error::new(e).wrap_err("failed to start daemon: unexpected error occurred when connecting to the existing socket"))
             },
         }
 

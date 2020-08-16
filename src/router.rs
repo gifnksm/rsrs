@@ -1,6 +1,8 @@
-use crate::{endpoint, protocol, Result};
+use crate::{endpoint, protocol, Error, Result};
+use color_eyre::eyre::eyre;
 use futures_core::{Future, Stream};
 use futures_util::{
+    future::TryFutureExt as _,
     pin_mut,
     sink::{Sink, SinkExt},
     StreamExt,
@@ -10,7 +12,7 @@ use once_cell::sync::Lazy;
 use parking_lot::{Mutex, MutexGuard};
 use std::{
     collections::{hash_map::Entry, HashMap},
-    env, io,
+    env,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -175,7 +177,7 @@ impl Drop for StatusReceiver {
 }
 
 async fn sender(
-    sink: impl Sink<protocol::RemoteCommand, Error = io::Error>,
+    sink: impl Sink<protocol::RemoteCommand, Error = Error>,
     mut peer_rx: mpsc::Receiver<protocol::RemoteCommand>,
 ) -> Result<()> {
     pin_mut!(sink);
@@ -187,13 +189,15 @@ async fn sender(
     Ok(())
 }
 
-async fn receiver(source: impl Stream<Item = io::Result<protocol::RemoteCommand>>) -> Result<()> {
+async fn receiver(source: impl Stream<Item = Result<protocol::RemoteCommand>>) -> Result<()> {
     pin_mut!(source);
 
     while let Some(frame) = source.next().await {
         let frame = frame?;
         let mut tx = ROUTER.lock().handler_tx.clone().unwrap();
-        tx.send(protocol::Command::Recv(frame)).await?;
+        tx.send(protocol::Command::Recv(frame))
+            .map_err(|_| eyre!("send failed"))
+            .await?;
     }
     Ok(())
 }
@@ -255,8 +259,8 @@ async fn router(
 
 pub(crate) fn spawn(
     kind: protocol::ProcessKind,
-    source: impl Stream<Item = io::Result<protocol::RemoteCommand>> + Send + 'static,
-    sink: impl Sink<protocol::RemoteCommand, Error = io::Error> + Send + 'static,
+    source: impl Stream<Item = Result<protocol::RemoteCommand>> + Send + 'static,
+    sink: impl Sink<protocol::RemoteCommand, Error = Error> + Send + 'static,
 ) -> JoinHandle<()> {
     let (handler_tx, handler_rx) = mpsc::channel(64);
     let (peer_tx, peer_rx) = mpsc::channel(64);

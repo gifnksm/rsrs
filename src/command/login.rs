@@ -2,9 +2,14 @@ use super::GlobalOpts;
 use crate::{
     common, protocol, router,
     terminal::{self, RawMode},
-    Result,
+    Error, Result,
 };
-use futures_util::stream::StreamExt as _;
+use color_eyre::eyre::eyre;
+use futures_util::{
+    future::TryFutureExt as _,
+    sink::SinkExt as _,
+    stream::{StreamExt as _, TryStreamExt as _},
+};
 use nix::{libc, unistd};
 use parking_lot::Mutex;
 use std::{
@@ -123,8 +128,8 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
     let remote_stderr = child.stderr.take().unwrap();
     let status = child;
 
-    let reader = common::new_reader(remote_stdout);
-    let writer = common::new_writer(remote_stdin);
+    let reader = common::new_reader(remote_stdout).err_into::<Error>();
+    let writer = common::new_writer(remote_stdin).sink_map_err(Error::from);
 
     let router = router::spawn(protocol::ProcessKind::Local, reader, writer);
 
@@ -157,6 +162,12 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
         .send(protocol::Command::Send(protocol::RemoteCommand::SetEnv(
             protocol::SetEnv { env_vars },
         )))
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "send remote command failed error",
+            )
+        })
         .await?;
 
     // Spawn command
@@ -208,6 +219,7 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
                 stream: Box::new(io::stdout()),
                 pty_name: None,
             }))
+            .map_err(|_| eyre!("send failed"))
             .await?;
         handler_tx
             .send(protocol::Command::Send(protocol::RemoteCommand::Spawn(
@@ -218,6 +230,7 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
                     env_vars,
                 },
             )))
+            .map_err(|_| eyre!("send failed"))
             .await?;
         // FIXME: create a dedicated thread for stdin. see https://docs.rs/tokio/0.2.22/tokio/io/fn.stdin.html
         handler_tx
@@ -225,6 +238,7 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
                 id,
                 stream: Box::new(io::stdin()),
             }))
+            .map_err(|_| eyre!("send failed"))
             .await?;
 
         let remote_status = status_rx.await?;
@@ -236,9 +250,11 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
 
     handler_tx
         .send(protocol::Command::Send(protocol::RemoteCommand::Exit))
+        .map_err(|_| eyre!("send failed"))
         .await?;
     handler_tx
         .send(protocol::Command::Recv(protocol::RemoteCommand::Exit))
+        .map_err(|_| eyre!("send failed"))
         .await?;
 
     let status = status.await?;

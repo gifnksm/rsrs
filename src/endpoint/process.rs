@@ -3,7 +3,9 @@ use crate::{
     router::{self, ChannelReceiver},
     terminal, Result,
 };
+use color_eyre::eyre::eyre;
 use etc_passwd::Passwd;
+use futures_util::TryFutureExt as _;
 use nix::libc;
 use std::{
     env,
@@ -97,6 +99,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
             stream: child_stdin,
             pty_name,
         }))
+        .map_err(|_| eyre!("send failed"))
         .await?;
 
     handler_tx
@@ -104,6 +107,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
             id,
             stream: child_stdout,
         }))
+        .map_err(|_| eyre!("send failed"))
         .await?;
 
     let code = status.await?;
@@ -114,6 +118,7 @@ pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<(
                 status: code.into(),
             }),
         ))
+        .map_err(|_| eyre!("send failed"))
         .await?;
 
     Ok(())

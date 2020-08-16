@@ -1,4 +1,6 @@
 use crate::{protocol, router, Result};
+use color_eyre::eyre::eyre;
+use futures_util::TryFutureExt as _;
 use tokio::prelude::*;
 
 pub(crate) async fn run(source: protocol::Source) -> Result<()> {
@@ -17,7 +19,7 @@ pub(crate) async fn run(source: protocol::Source) -> Result<()> {
                 id,
                 data: protocol::ChannelData::Output(buf[..n].into()),
             }));
-        tx.send(frame).await?;
+        tx.send(frame).map_err(|_| eyre!("send failed")).await?;
     }
 
     let frame =
@@ -25,7 +27,7 @@ pub(crate) async fn run(source: protocol::Source) -> Result<()> {
             id,
             data: protocol::ChannelData::Shutdown,
         }));
-    tx.send(frame).await?;
+    tx.send(frame).map_err(|_| eyre!("send failed")).await?;
 
     Ok(())
 }

@@ -1,6 +1,6 @@
 use clap::Clap as _;
+use color_eyre::eyre;
 use command::Opts;
-use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
 mod command;
 mod common;
@@ -10,18 +10,32 @@ mod protocol;
 mod router;
 mod terminal;
 
-type Error = Box<dyn std::error::Error>;
-type Result<T> = std::result::Result<T, Error>;
+type Error = eyre::Error;
+type Result<T> = eyre::Result<T, Error>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into()))
-        .with_writer(std::io::stderr)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("no global subscriber has been set");
+    install_tracing();
+    color_eyre::install()?;
 
     command::run(Opts::parse()).await?;
 
     Ok(())
+}
+
+fn install_tracing() {
+    use tracing_error::ErrorLayer;
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    let fmt_layer = fmt::layer().with_writer(std::io::stderr);
+    let filter_layer = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
+    let error_layer = ErrorLayer::default();
+
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(fmt_layer)
+        .with(error_layer)
+        .init();
 }
