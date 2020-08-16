@@ -1,6 +1,6 @@
 use super::GlobalOpts;
 use crate::{
-    protocol, router,
+    common, protocol, router,
     terminal::{self, RawMode},
     Result,
 };
@@ -123,8 +123,8 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
     let remote_stderr = child.stderr.take().unwrap();
     let status = child;
 
-    let reader = protocol::RemoteCommand::new_reader(remote_stdout);
-    let writer = protocol::RemoteCommand::new_writer(remote_stdin);
+    let reader = common::new_reader(remote_stdout);
+    let writer = common::new_writer(remote_stdin);
 
     let router = router::spawn(protocol::ProcessKind::Local, reader, writer);
 

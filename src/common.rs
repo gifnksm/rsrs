@@ -1,36 +1,30 @@
-use crate::protocol::RemoteCommand;
+use serde::{Deserialize, Serialize};
 use tokio::prelude::*;
 use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
 use tokio_util::codec::{self, LengthDelimitedCodec};
 
-pub(crate) type FramedWrite<T> = SymmetricallyFramed<
-    codec::FramedWrite<T, LengthDelimitedCodec>,
-    RemoteCommand,
-    SymmetricalBincode<RemoteCommand>,
->;
+pub(crate) type FramedWrite<T, S> =
+    SymmetricallyFramed<codec::FramedWrite<S, LengthDelimitedCodec>, T, SymmetricalBincode<T>>;
 
-pub(crate) type FramedRead<T> = SymmetricallyFramed<
-    codec::FramedRead<T, LengthDelimitedCodec>,
-    RemoteCommand,
-    SymmetricalBincode<RemoteCommand>,
->;
+pub(crate) type FramedRead<T, S> =
+    SymmetricallyFramed<codec::FramedRead<S, LengthDelimitedCodec>, T, SymmetricalBincode<T>>;
 
-impl RemoteCommand {
-    pub(crate) fn new_writer<T>(inner: T) -> FramedWrite<T>
-    where
-        T: AsyncWrite,
-    {
-        let length_delimited = codec::FramedWrite::new(inner, LengthDelimitedCodec::new());
-        SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
-    }
+pub(crate) fn new_writer<T, S>(inner: S) -> FramedWrite<T, S>
+where
+    T: Serialize,
+    S: AsyncWrite,
+{
+    let length_delimited = codec::FramedWrite::new(inner, LengthDelimitedCodec::new());
+    SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
+}
 
-    pub(crate) fn new_reader<T>(inner: T) -> FramedRead<T>
-    where
-        T: AsyncRead,
-    {
-        let length_delimited = codec::FramedRead::new(inner, LengthDelimitedCodec::new());
-        SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
-    }
+pub(crate) fn new_reader<T, S>(inner: S) -> FramedRead<T, S>
+where
+    T: for<'a> Deserialize<'a>,
+    S: AsyncRead,
+{
+    let length_delimited = codec::FramedRead::new(inner, LengthDelimitedCodec::new());
+    SymmetricallyFramed::new(length_delimited, SymmetricalBincode::default())
 }
 
 pub(crate) fn nix2io(e: nix::Error) -> io::Error {

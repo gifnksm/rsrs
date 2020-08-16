@@ -1,13 +1,20 @@
 use super::GlobalOpts;
-use crate::{protocol, Result};
-use std::{ffi::OsString, fmt::Debug, process::Stdio};
+use crate::{
+    common, protocol,
+    protocol::cli::{self, Request, Response},
+    Result,
+};
+use futures_util::SinkExt as _;
+use passfd::tokio_02::FdPassingExt;
+use std::{ffi::OsString, fmt::Debug, os::unix::io::AsRawFd, process::Stdio};
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::UnixStream,
     process::{Child, Command},
+    stream::StreamExt as _,
     sync::watch,
 };
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 use tracing_futures::Instrument;
 
 /// Launch RSRS daemon
@@ -38,10 +45,15 @@ pub(super) async fn run(global: GlobalOpts, local: Opts) -> Result<()> {
         .spawn()?;
 
     launch_remote(&mut child).await?;
+    delegate_fd(local, &mut stream, &mut child).await?;
+
+    debug!("open completed");
 
     Ok(())
 }
 
+#[tracing::instrument(skip(child), err)]
+#[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
 async fn launch_remote(child: &mut Child) -> Result<()> {
     let mut remote_stdin = child.stdin.take().unwrap();
     let mut remote_stdout = child.stdout.take().unwrap();
@@ -85,6 +97,75 @@ async fn launch_remote(child: &mut Child) -> Result<()> {
     Ok(())
 }
 
+#[tracing::instrument(skip(local, stream, child), err)]
+#[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
+async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) -> Result<()> {
+    let (in_stream, out_stream) = stream.split();
+    let mut writer = common::new_writer::<Request, _>(out_stream);
+    let mut reader = common::new_reader::<Response, _>(in_stream);
+
+    trace!("sending open request");
+    writer
+        .send(Request::Open(cli::Open {
+            command: local.command,
+            args: local.args,
+            has_stdin: child.stdin.is_some(),
+            has_stdout: child.stdout.is_some(),
+            has_stderr: child.stderr.is_some(),
+        }))
+        .await?;
+
+    if let Some(stdin) = &child.stdin {
+        trace!("sending stdin file descriptor");
+        writer
+            .get_ref()
+            .get_ref()
+            .as_ref()
+            .send_fd(stdin.as_raw_fd())
+            .await?;
+    }
+    if let Some(stdout) = &child.stdout {
+        trace!("sending stdout file descriptor");
+        writer
+            .get_ref()
+            .get_ref()
+            .as_ref()
+            .send_fd(stdout.as_raw_fd())
+            .await?;
+    }
+    if let Some(stderr) = &child.stderr {
+        trace!("sending stderr file descriptor");
+        writer
+            .get_ref()
+            .get_ref()
+            .as_ref()
+            .send_fd(stderr.as_raw_fd())
+            .await?;
+    }
+
+    trace!("waiting response");
+    match reader
+        .next()
+        .await
+        .unwrap_or_else(|| Err(io::Error::from(io::ErrorKind::UnexpectedEof)))?
+    {
+        Response::Ok => debug!("sending fd completed"),
+        resp => {
+            error!(resp = ?resp,"unexpected response received");
+            return Err(io::Error::from(io::ErrorKind::InvalidData).into());
+        }
+    }
+
+    child.stdin = None;
+    child.stdout = None;
+    child.stderr = None;
+
+    trace!("completed");
+
+    Ok(())
+}
+
+#[tracing::instrument(skip(in_stream, out_stream, rx), err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
 async fn forward_until_interrupted(
     mut in_stream: impl AsyncRead + Unpin,
@@ -112,6 +193,7 @@ async fn forward_until_interrupted(
     Ok(())
 }
 
+#[tracing::instrument(skip(in_stream, out_stream, magic), err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
 async fn forward_until_magic(
     mut in_stream: impl AsyncRead + Unpin,
