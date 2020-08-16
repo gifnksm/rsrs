@@ -19,7 +19,7 @@ use tokio::{
     net::{UnixListener, UnixStream},
     stream::StreamExt as _,
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 /// Launch RSRS daemon
 #[derive(Debug, clap::Clap)]
@@ -85,6 +85,8 @@ pub(super) async fn run(global: GlobalOpts, local: Opts) -> Result<()> {
         }
     }
 
+    // TODO: delete socket file before exiting
+
     Ok(())
 }
 
@@ -103,6 +105,7 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
         match req {
             Request::Open(open) => {
                 let cli::Open {
+                    pid,
                     command,
                     args,
                     has_stdin,
@@ -112,7 +115,7 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
 
                 let stdin = if has_stdin {
                     trace!("waiting stdin file descriptor received");
-                    let fd = reader.get_ref().get_ref().as_ref().recv_fd().await;
+                    let fd = reader.get_ref().get_ref().as_ref().recv_fd().await?;
                     Some(fd)
                 } else {
                     None
@@ -131,11 +134,12 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
                 } else {
                     None
                 };
+                trace!(?stdin, ?stdout, ?stderr, "file descriptor received");
 
                 trace!("sending response");
                 writer.send(Response::Ok).await?;
 
-                trace!("completed");
+                info!(%pid, ?command, ?args, "connection opened");
             }
         }
     }

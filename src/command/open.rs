@@ -126,7 +126,7 @@ async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) ->
         .await?;
 
     if let Some(stdin) = &child.stdin {
-        trace!("sending stdin file descriptor");
+        trace!(fd = stdin.as_raw_fd(), "sending stdin file descriptor");
         writer
             .get_ref()
             .get_ref()
@@ -135,7 +135,7 @@ async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) ->
             .await?;
     }
     if let Some(stdout) = &child.stdout {
-        trace!("sending stdout file descriptor");
+        trace!(fd = stdout.as_raw_fd(), "sending stdout file descriptor");
         writer
             .get_ref()
             .get_ref()
@@ -144,7 +144,7 @@ async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) ->
             .await?;
     }
     if let Some(stderr) = &child.stderr {
-        trace!("sending stderr file descriptor");
+        trace!(fd = stderr.as_raw_fd(), "sending stderr file descriptor");
         writer
             .get_ref()
             .get_ref()
