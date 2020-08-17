@@ -18,7 +18,10 @@ use std::{
     path::{Path, PathBuf},
 };
 use tokio::{
-    net::{unix::ReadHalf, UnixListener, UnixStream},
+    net::{
+        unix::{ReadHalf, WriteHalf},
+        UnixListener, UnixStream,
+    },
     stream::StreamExt as _,
 };
 use tracing::{debug, info, trace, warn};
@@ -146,18 +149,21 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
                     has_stderr,
                 } = open;
 
+                trace!("sending response");
+                writer.send(Response::Ok).await?;
+
                 let stdin = if has_stdin {
-                    Some(recv_fd("stdin", &mut reader).await?)
+                    Some(recv_fd("stdin", &mut reader, &mut writer).await?)
                 } else {
                     None
                 };
                 let stdout = if has_stdout {
-                    Some(recv_fd("stdout", &mut reader).await?)
+                    Some(recv_fd("stdout", &mut reader, &mut writer).await?)
                 } else {
                     None
                 };
                 let stderr = if has_stderr {
-                    Some(recv_fd("stderr", &mut reader).await?)
+                    Some(recv_fd("stderr", &mut reader, &mut writer).await?)
                 } else {
                     None
                 };
@@ -174,14 +180,16 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
     Ok(())
 }
 
-#[tracing::instrument(skip(reader), err)]
+#[tracing::instrument(skip(reader, writer), err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
 async fn recv_fd(
     kind: &str,
     reader: &mut common::FramedRead<Request, ReadHalf<'_>>,
+    writer: &mut common::FramedWrite<Response, WriteHalf<'_>>,
 ) -> Result<RawFd> {
     trace!("receiving file descriptor");
     let fd = reader.get_ref().get_ref().as_ref().recv_fd().await?;
+    writer.send(Response::Ok).await?;
     trace!(fd, "completed");
     Ok(fd)
 }

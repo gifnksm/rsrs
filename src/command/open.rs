@@ -129,14 +129,17 @@ async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) ->
         }))
         .await?;
 
+    trace!("waiting response");
+    recv_ok(&mut reader).await?;
+
     if let Some(stdin) = &child.stdin {
-        send_fd("stdin", stdin, &mut writer).await?;
+        send_fd("stdin", stdin, &mut reader, &mut writer).await?;
     }
     if let Some(stdout) = &child.stdout {
-        send_fd("stdout", stdout, &mut writer).await?;
+        send_fd("stdout", stdout, &mut reader, &mut writer).await?;
     }
     if let Some(stderr) = &child.stderr {
-        send_fd("stderr", stderr, &mut writer).await?;
+        send_fd("stderr", stderr, &mut reader, &mut writer).await?;
     }
 
     trace!("waiting response");
@@ -151,16 +154,19 @@ async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) ->
     Ok(())
 }
 
-#[tracing::instrument(skip(writer, fd), fields(fd = fd.as_raw_fd()), err)]
+#[tracing::instrument(skip(reader, writer, fd), fields(fd = fd.as_raw_fd()), err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
 async fn send_fd(
     kind: &str,
     fd: &(impl AsRawFd + Debug),
+    reader: &mut common::FramedRead<Response, ReadHalf<'_>>,
     writer: &mut common::FramedWrite<Request, WriteHalf<'_>>,
 ) -> Result<()> {
     let fd = fd.as_raw_fd();
     trace!("sending file descriptor");
     writer.get_ref().get_ref().as_ref().send_fd(fd).await?;
+    trace!("waiting response");
+    recv_ok(reader).await?;
     trace!("completed");
     Ok(())
 }
