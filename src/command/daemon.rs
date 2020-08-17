@@ -8,12 +8,14 @@ use crate::{
     Error, Result,
 };
 use color_eyre::eyre::{bail, ensure};
-use futures_util::SinkExt as _;
+use futures_util::{SinkExt as _, TryFutureExt as _};
 use passfd::tokio_02::FdPassingExt;
 use std::{
+    fmt::Debug,
     fs,
     io::{self, Write},
     os::unix::fs::FileTypeExt as _,
+    path::{Path, PathBuf},
 };
 use tokio::{
     net::{UnixListener, UnixStream},
@@ -34,37 +36,9 @@ pub(super) async fn run(global: GlobalOpts, local: Opts) -> Result<()> {
     let sock_path = global.sock_path(local.is_leaf);
     debug!(sock_path = %sock_path.display());
 
-    if sock_path.exists() {
-        let metadata = sock_path.metadata()?;
-        ensure!(
-            metadata.file_type().is_socket(),
-            "failed to start daemon: socket is already exists and it is not a socket file: {}",
-            sock_path.display()
-        );
-
-        // Attempt to connect to the socket to determine if another server process is listening
-        match UnixStream::connect(&sock_path).await {
-            Ok(_stream) => {
-                bail!(
-                    "failed to start daemon: another server process is running on the socket: {}",
-                    sock_path.display()
-                );
-            }
-            Err(e) => match e.kind() {
-                io::ErrorKind::ConnectionRefused => {
-                    debug!(sock_path = %sock_path.display(), error = %e,
-                        "connection refused. maybe no server process is running");
-                }
-                _ => return Err(Error::new(e).wrap_err("failed to start daemon: unexpected error occurred when connecting to the existing socket"))
-            },
-        }
-
-        fs::remove_file(&sock_path)?;
-    }
-
-    let mut listener = UnixListener::bind(sock_path)?;
-    debug!(local_addr = ?listener.local_addr()?,
-            "start listening");
+    let (mut listener, _guard) = setup_socket(&sock_path)
+        .map_err(|e| e.wrap_err("failed to setup socket"))
+        .await?;
 
     if local.is_leaf {
         let mut out = io::stdout();
@@ -83,9 +57,70 @@ pub(super) async fn run(global: GlobalOpts, local: Opts) -> Result<()> {
         }
     }
 
-    // TODO: delete socket file before exiting
-
     Ok(())
+}
+
+#[derive(Debug)]
+struct SocketGuard(PathBuf);
+
+impl Drop for SocketGuard {
+    fn drop(&mut self) {
+        match fs::remove_file(&self.0) {
+            Ok(()) => {
+                debug!(sock_path = %self.0.display(), "socket file deleted");
+            }
+            Err(error) => {
+                warn!(%error, sock_path = %self.0.display(),
+                    "failed to delete socket file");
+            }
+        }
+    }
+}
+
+#[tracing::instrument(err)]
+#[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
+async fn setup_socket(sock_path: impl AsRef<Path> + Debug) -> Result<(UnixListener, SocketGuard)> {
+    let sock_path = sock_path.as_ref();
+
+    if sock_path.exists() {
+        let metadata = sock_path.metadata()?;
+        ensure!(
+            metadata.file_type().is_socket(),
+            "file already exists and it is not a socket file: {}",
+            sock_path.display()
+        );
+
+        // Attempt to connect to the socket to determine if another server process is listening
+        match UnixStream::connect(&sock_path).await {
+            Ok(_stream) => {
+                bail!(
+                    "another server process is running on the socket: {}",
+                    sock_path.display()
+                );
+            }
+            Err(e) => match e.kind() {
+                io::ErrorKind::ConnectionRefused => {
+                    debug!(sock_path = %sock_path.display(), error = %e,
+                        "connection refused. maybe no server process is running");
+                }
+                _ => {
+                    return Err(Error::new(e).wrap_err(
+                        "unexpected error occurred when connecting to the existing socket",
+                    ))
+                }
+            },
+        }
+
+        fs::remove_file(&sock_path)?;
+    }
+
+    let listener = UnixListener::bind(sock_path)?;
+    let guard = SocketGuard(sock_path.to_owned());
+
+    debug!(local_addr = ?listener.local_addr()?,
+            "daemon started");
+
+    Ok((listener, guard))
 }
 
 #[tracing::instrument(skip(stream), err)]
