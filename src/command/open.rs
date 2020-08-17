@@ -4,18 +4,22 @@ use crate::{
     protocol::cli::{self, Request, Response},
     Result,
 };
+use color_eyre::eyre::eyre;
 use futures_util::SinkExt as _;
 use nix::unistd;
 use passfd::tokio_02::FdPassingExt;
 use std::{ffi::OsString, fmt::Debug, os::unix::io::AsRawFd, process::Stdio};
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::UnixStream,
+    net::{
+        unix::{ReadHalf, WriteHalf},
+        UnixStream,
+    },
     process::{Child, Command},
     stream::StreamExt as _,
     sync::watch,
 };
-use tracing::{debug, error, trace};
+use tracing::{debug, trace};
 use tracing_futures::Instrument;
 
 /// Launch RSRS daemon
@@ -126,45 +130,17 @@ async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) ->
         .await?;
 
     if let Some(stdin) = &child.stdin {
-        trace!(fd = stdin.as_raw_fd(), "sending stdin file descriptor");
-        writer
-            .get_ref()
-            .get_ref()
-            .as_ref()
-            .send_fd(stdin.as_raw_fd())
-            .await?;
+        send_fd("stdin", stdin, &mut writer).await?;
     }
     if let Some(stdout) = &child.stdout {
-        trace!(fd = stdout.as_raw_fd(), "sending stdout file descriptor");
-        writer
-            .get_ref()
-            .get_ref()
-            .as_ref()
-            .send_fd(stdout.as_raw_fd())
-            .await?;
+        send_fd("stdout", stdout, &mut writer).await?;
     }
     if let Some(stderr) = &child.stderr {
-        trace!(fd = stderr.as_raw_fd(), "sending stderr file descriptor");
-        writer
-            .get_ref()
-            .get_ref()
-            .as_ref()
-            .send_fd(stderr.as_raw_fd())
-            .await?;
+        send_fd("stderr", stderr, &mut writer).await?;
     }
 
     trace!("waiting response");
-    match reader
-        .next()
-        .await
-        .unwrap_or_else(|| Err(io::Error::from(io::ErrorKind::UnexpectedEof)))?
-    {
-        Response::Ok => debug!("sending fd completed"),
-        resp => {
-            error!(resp = ?resp,"unexpected response received");
-            return Err(io::Error::from(io::ErrorKind::InvalidData).into());
-        }
-    }
+    recv_ok(&mut reader).await?;
 
     child.stdin = None;
     child.stdout = None;
@@ -173,6 +149,33 @@ async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) ->
     trace!("completed");
 
     Ok(())
+}
+
+#[tracing::instrument(skip(writer, fd), fields(fd = fd.as_raw_fd()), err)]
+#[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
+async fn send_fd(
+    kind: &str,
+    fd: &(impl AsRawFd + Debug),
+    writer: &mut common::FramedWrite<Request, WriteHalf<'_>>,
+) -> Result<()> {
+    let fd = fd.as_raw_fd();
+    trace!("sending file descriptor");
+    writer.get_ref().get_ref().as_ref().send_fd(fd).await?;
+    trace!("completed");
+    Ok(())
+}
+
+#[tracing::instrument(skip(reader), err)]
+#[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
+async fn recv_ok(reader: &mut common::FramedRead<Response, ReadHalf<'_>>) -> Result<()> {
+    let resp = reader
+        .next()
+        .await
+        .unwrap_or_else(|| Err(io::Error::from(io::ErrorKind::UnexpectedEof)))?;
+    match resp {
+        Response::Ok => Ok(()),
+        resp => Err(eyre!("unexpected response received: resp = {:?}", resp)),
+    }
 }
 
 #[tracing::instrument(skip(in_stream, out_stream, rx), err)]

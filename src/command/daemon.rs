@@ -14,11 +14,11 @@ use std::{
     fmt::Debug,
     fs,
     io::{self, Write},
-    os::unix::fs::FileTypeExt as _,
+    os::unix::{fs::FileTypeExt as _, io::RawFd},
     path::{Path, PathBuf},
 };
 use tokio::{
-    net::{UnixListener, UnixStream},
+    net::{unix::ReadHalf, UnixListener, UnixStream},
     stream::StreamExt as _,
 };
 use tracing::{debug, info, trace, warn};
@@ -147,23 +147,17 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
                 } = open;
 
                 let stdin = if has_stdin {
-                    trace!("waiting stdin file descriptor received");
-                    let fd = reader.get_ref().get_ref().as_ref().recv_fd().await?;
-                    Some(fd)
+                    Some(recv_fd("stdin", &mut reader).await?)
                 } else {
                     None
                 };
                 let stdout = if has_stdout {
-                    trace!("waiting stdout file descriptor received");
-                    let fd = reader.get_ref().get_ref().as_ref().recv_fd().await?;
-                    Some(fd)
+                    Some(recv_fd("stdout", &mut reader).await?)
                 } else {
                     None
                 };
                 let stderr = if has_stderr {
-                    trace!("waiting stderr file descriptor received");
-                    let fd = reader.get_ref().get_ref().as_ref().recv_fd().await?;
-                    Some(fd)
+                    Some(recv_fd("stderr", &mut reader).await?)
                 } else {
                     None
                 };
@@ -178,4 +172,16 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[tracing::instrument(skip(reader), err)]
+#[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
+async fn recv_fd(
+    kind: &str,
+    reader: &mut common::FramedRead<Request, ReadHalf<'_>>,
+) -> Result<RawFd> {
+    trace!("receiving file descriptor");
+    let fd = reader.get_ref().get_ref().as_ref().recv_fd().await?;
+    trace!(fd, "completed");
+    Ok(fd)
 }
