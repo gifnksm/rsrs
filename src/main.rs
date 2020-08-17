@@ -4,6 +4,7 @@ use command::Opts;
 
 mod command;
 mod common;
+mod daemon;
 mod endpoint;
 mod ioctl;
 mod protocol;
