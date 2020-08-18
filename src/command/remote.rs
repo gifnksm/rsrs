@@ -1,7 +1,5 @@
 use super::GlobalOpts;
-use crate::{common, protocol, router, Error, Result};
-use futures_util::{sink::SinkExt as _, stream::TryStreamExt as _};
-use tokio::prelude::*;
+use crate::{common, prelude::*, protocol, router, Error, Result};
 
 /// Launch remote endpoint
 #[derive(Debug, clap::Clap)]

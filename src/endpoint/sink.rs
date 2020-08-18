@@ -1,11 +1,9 @@
-use crate::{protocol, terminal, Result};
-use futures_util::StreamExt;
+use crate::{prelude::*, protocol, terminal, Result};
 use nix::libc;
 use std::{
     fs::OpenOptions,
     os::unix::{fs::OpenOptionsExt as _, io::AsRawFd},
 };
-use tokio::prelude::*;
 
 pub(crate) async fn run(sink: protocol::Sink) -> Result<()> {
     let protocol::Sink {

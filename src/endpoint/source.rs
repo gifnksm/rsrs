@@ -1,7 +1,4 @@
-use crate::{protocol, router, Result};
-use color_eyre::eyre::eyre;
-use futures_util::TryFutureExt as _;
-use tokio::prelude::*;
+use crate::{prelude::*, protocol, router, Result};
 
 pub(crate) async fn run(source: protocol::Source) -> Result<()> {
     let mut tx = router::lock().handler_tx();

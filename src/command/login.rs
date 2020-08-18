@@ -1,14 +1,10 @@
 use super::GlobalOpts;
 use crate::{
-    common, protocol, router,
+    common,
+    prelude::*,
+    protocol, router,
     terminal::{self, RawMode},
     Error, Result,
-};
-use color_eyre::eyre::eyre;
-use futures_util::{
-    future::TryFutureExt as _,
-    sink::SinkExt as _,
-    stream::{StreamExt as _, TryStreamExt as _},
 };
 use nix::{libc, unistd};
 use parking_lot::Mutex;
@@ -21,11 +17,9 @@ use std::{
 };
 use tokio::{
     io::BufReader,
-    prelude::*,
     process::Command,
     signal::unix::{signal, SignalKind},
 };
-use tracing::{debug, info, trace, warn};
 
 /// Starts remote login client
 #[derive(Debug, clap::Clap)]

@@ -1,12 +1,6 @@
-use crate::{endpoint, protocol, Error, Result};
-use color_eyre::eyre::eyre;
+use crate::{endpoint, prelude::*, protocol, Error, Result};
 use futures_core::{Future, Stream};
-use futures_util::{
-    future::TryFutureExt as _,
-    pin_mut,
-    sink::{Sink, SinkExt},
-    StreamExt,
-};
+use futures_util::{pin_mut, sink::Sink};
 use generational_arena::{Arena, Index};
 use once_cell::sync::Lazy;
 use parking_lot::{Mutex, MutexGuard};

@@ -1,5 +1,4 @@
-use crate::{protocol, Result};
-use futures_util::TryFutureExt as _;
+use crate::{prelude::*, protocol, Result};
 use std::{
     borrow::Cow,
     io::{self, Write},

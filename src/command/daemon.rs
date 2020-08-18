@@ -1,6 +1,5 @@
 use super::GlobalOpts;
-use crate::{daemon, Result};
-use futures_util::TryFutureExt as _;
+use crate::{daemon, prelude::*, Result};
 
 /// Launch RSRS daemon
 #[derive(Debug, clap::Clap)]

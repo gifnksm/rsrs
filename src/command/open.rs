@@ -1,25 +1,22 @@
 use super::GlobalOpts;
 use crate::{
-    common, protocol,
+    common,
+    prelude::*,
+    protocol,
     protocol::cli::{self, Request, Response},
     Result,
 };
-use color_eyre::eyre::eyre;
-use futures_util::SinkExt as _;
 use nix::unistd;
 use passfd::tokio_02::FdPassingExt;
 use std::{ffi::OsString, fmt::Debug, os::unix::io::AsRawFd, process::Stdio};
 use tokio::{
-    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{
         unix::{ReadHalf, WriteHalf},
         UnixStream,
     },
     process::{Child, Command},
-    stream::StreamExt as _,
     sync::watch,
 };
-use tracing::{debug, trace};
 use tracing_futures::Instrument;
 
 /// Launch RSRS daemon

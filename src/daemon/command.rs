@@ -1,10 +1,9 @@
 use crate::{
     common,
+    prelude::*,
     protocol::cli::{self, Request, Response},
     Error, Result,
 };
-use color_eyre::eyre::{bail, ensure};
-use futures_util::{SinkExt as _, TryFutureExt as _};
 use passfd::tokio_02::FdPassingExt;
 use std::{
     borrow::Cow,
@@ -13,14 +12,10 @@ use std::{
     os::unix::{fs::FileTypeExt as _, io::RawFd},
     path::{Path, PathBuf},
 };
-use tokio::{
-    net::{
-        unix::{ReadHalf, WriteHalf},
-        UnixListener, UnixStream,
-    },
-    stream::StreamExt as _,
+use tokio::net::{
+    unix::{ReadHalf, WriteHalf},
+    UnixListener, UnixStream,
 };
-use tracing::{debug, info, trace, warn};
 
 #[tracing::instrument(err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843

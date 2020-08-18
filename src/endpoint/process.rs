@@ -1,11 +1,10 @@
 use crate::{
+    prelude::*,
     protocol,
     router::{self, ChannelReceiver},
     terminal, Result,
 };
-use color_eyre::eyre::eyre;
 use etc_passwd::Passwd;
-use futures_util::TryFutureExt as _;
 use nix::libc;
 use std::{
     env,
@@ -15,7 +14,7 @@ use std::{
     os::unix::{fs::OpenOptionsExt, io::AsRawFd, process::CommandExt},
     process::{Command as StdCommand, Stdio},
 };
-use tokio::{prelude::*, process::Command};
+use tokio::process::Command;
 use tokio_pty_command::{CommandExt as _, PtyMaster};
 
 pub(crate) async fn run(rx: ChannelReceiver, spawn: protocol::Spawn) -> Result<()> {

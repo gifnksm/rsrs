@@ -7,6 +7,7 @@ mod common;
 mod daemon;
 mod endpoint;
 mod ioctl;
+mod prelude;
 mod protocol;
 mod router;
 mod terminal;

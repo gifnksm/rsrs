@@ -1,6 +1,5 @@
-use crate::router;
+use crate::{prelude::*, router};
 use std::{ffi::OsString, os::unix::process::ExitStatusExt as _};
-use tokio::prelude::*;
 
 pub(crate) mod cli;
 
