@@ -1,7 +1,7 @@
 [package]
 name = "tokio-pty-command"
 version = "0.1.0"
-authors = ["NAKASHIMA, Makoto <makoto.nksm+github@gmail.com>"]
+authors = [ "NAKASHIMA, Makoto <makoto.nksm+github@gmail.com>" ]
 edition = "2018"
 publish = false
 
@@ -10,4 +10,4 @@ publish = false
 [dependencies]
 mio = "0.6.22"
 nix = "0.18.0"
-tokio = { version = "0.2.22", features = ["process"] }
+tokio = { version = "0.2.22", features = [ "process" ] }
