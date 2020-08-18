@@ -24,6 +24,8 @@ pub(super) async fn setup(sock_path: Cow<'_, Path>) -> Result<(UnixListener, Soc
         .map_err(|e| e.wrap_err("failed to setup socket"))
         .await?;
 
+    trace!("completed");
+
     Ok((listener, guard))
 }
 
