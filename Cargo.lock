@@ -872,6 +872,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "passfd",
+ "rand",
  "serde",
  "tokio",
  "tokio-pty-command",
