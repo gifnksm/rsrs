@@ -24,8 +24,8 @@ use tokio::net::{
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
 pub(super) async fn setup(sock_path: Cow<'_, Path>) -> Result<(UnixListener, SocketGuard)> {
     let (listener, guard) = setup_socket(&sock_path)
-        .map_err(|e| e.wrap_err("failed to setup socket"))
-        .await?;
+        .await
+        .wrap_err("failed to setup socket")?;
 
     trace!("completed");
 
@@ -124,37 +124,46 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
     while let Some(req) = reader.next().await {
         let req = req?;
         trace!(?req, "req received");
-        match req {
-            Request::Open(open) => {
-                let cli::Open { pid, command, args } = open;
+        let res = match req {
+            Request::Open(req) => open(req, &mut reader, &mut writer).await,
+        };
 
-                trace!("sending response");
-                writer.send(Response::Ok).await?;
-
-                let stdin = unsafe {
-                    FdReader::from_raw_fd(recv_fd("stdin", &mut reader, &mut writer).await?)?
-                };
-                let stdout = unsafe {
-                    FdWriter::from_raw_fd(recv_fd("stdout", &mut reader, &mut writer).await?)?
-                };
-                let stderr = unsafe {
-                    FdWriter::from_raw_fd(recv_fd("stderr", &mut reader, &mut writer).await?)?
-                };
-                trace!(
-                    stdin = ?stdin.as_raw_fd(),
-                    stdout = ?stdout.as_raw_fd(),
-                    stderr = ?stderr.as_raw_fd(),
-                    "file descriptor received"
-                );
-
-                trace!("sending response");
-                writer.send(Response::Ok).await?;
-
-                info!(%pid, ?command, ?args, "connection opened");
-            }
+        // Send error response and shutdown UNIX stream
+        if let Err(e) = res {
+            writer.send(Response::Err(format!("{:#}", e))).await?;
+            bail!(e);
         }
     }
 
+    Ok(())
+}
+
+#[tracing::instrument(skip(reader, writer), err)]
+#[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
+async fn open(
+    req: cli::Open,
+    reader: &mut common::FramedRead<Request, ReadHalf<'_>>,
+    writer: &mut common::FramedWrite<Response, WriteHalf<'_>>,
+) -> Result<()> {
+    let cli::Open { pid, command, args } = req;
+
+    trace!("sending response");
+    writer.send(Response::Ok).await?;
+
+    let stdin = unsafe { FdReader::from_raw_fd(recv_fd("stdin", reader, writer).await?)? };
+    let stdout = unsafe { FdWriter::from_raw_fd(recv_fd("stdout", reader, writer).await?)? };
+    let stderr = unsafe { FdWriter::from_raw_fd(recv_fd("stderr", reader, writer).await?)? };
+    trace!(
+        stdin = ?stdin.as_raw_fd(),
+        stdout = ?stdout.as_raw_fd(),
+        stderr = ?stderr.as_raw_fd(),
+        "file descriptor received"
+    );
+
+    trace!("sending response");
+    writer.send(Response::Ok).await?;
+
+    info!(%pid, ?command, ?args, "connection opened");
     Ok(())
 }
 
@@ -166,7 +175,13 @@ async fn recv_fd(
     writer: &mut common::FramedWrite<Response, WriteHalf<'_>>,
 ) -> Result<RawFd> {
     trace!("receiving file descriptor");
-    let fd = reader.get_ref().get_ref().as_ref().recv_fd().await?;
+    let fd = reader
+        .get_ref()
+        .get_ref()
+        .as_ref()
+        .recv_fd()
+        .await
+        .wrap_err_with(|| format!("failed to receive {} fd", kind))?;
     writer.send(Response::Ok).await?;
     trace!(fd, "completed");
     Ok(fd)

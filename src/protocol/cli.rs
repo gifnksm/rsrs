@@ -15,5 +15,5 @@ pub(crate) struct Open {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Response {
     Ok,
-    Err,
+    Err(String),
 }

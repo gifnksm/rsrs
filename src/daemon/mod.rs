@@ -10,12 +10,12 @@ pub(crate) async fn run(sock_path: Cow<'_, Path>, is_leaf: bool) -> Result<()> {
     trace!("setting up...");
 
     network::setup(is_leaf)
-        .map_err(|e| e.wrap_err("failed to setup network"))
-        .await?;
+        .await
+        .wrap_err("failed to setup network")?;
 
     let (listener, _guard) = command::setup(sock_path)
-        .map_err(|e| e.wrap_err("failed to setup command server"))
-        .await?;
+        .await
+        .wrap_err("failed to setup command server")?;
 
     trace!("setup completed");
 

@@ -172,7 +172,8 @@ async fn recv_ok(reader: &mut common::FramedRead<Response, ReadHalf<'_>>) -> Res
         .unwrap_or_else(|| Err(io::Error::from(io::ErrorKind::UnexpectedEof)))?;
     match resp {
         Response::Ok => Ok(()),
-        resp => Err(eyre!("unexpected response received: resp = {:?}", resp)),
+        Response::Err(msg) => Err(eyre!("error received from server: {}", msg)),
+        //resp => Err(eyre!("unexpected response received: resp = {:?}", resp)),
     }
 }
 

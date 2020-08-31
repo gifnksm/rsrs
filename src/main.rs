@@ -1,7 +1,7 @@
 #![type_length_limit = "15524550"]
 
+use self::prelude::*;
 use clap::Clap as _;
-use color_eyre::eyre;
 use command::Opts;
 
 mod command;

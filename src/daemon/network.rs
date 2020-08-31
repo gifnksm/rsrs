@@ -14,13 +14,9 @@ use std::{
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
 pub(crate) async fn setup(is_leaf: bool) -> Result<()> {
     if is_leaf {
-        setup_leaf()
-            .map_err(|e| e.wrap_err("failed to setup network"))
-            .await?;
+        setup_leaf().await.wrap_err("failed to setup network")?;
     } else {
-        setup_root()
-            .map_err(|e| e.wrap_err("failed to setup network"))
-            .await?;
+        setup_root().await.wrap_err("failed to setup network")?;
     }
 
     trace!("completed");
