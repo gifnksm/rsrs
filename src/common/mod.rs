@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
 use tokio_util::codec::{self, LengthDelimitedCodec};
 
+pub(crate) use fd::*;
+pub(crate) use fd_reader::*;
+pub(crate) use fd_writer::*;
+
+mod fd;
+mod fd_reader;
+mod fd_writer;
+
 pub(crate) type FramedWrite<T, S> =
     SymmetricallyFramed<codec::FramedWrite<S, LengthDelimitedCodec>, T, SymmetricalBincode<T>>;
 

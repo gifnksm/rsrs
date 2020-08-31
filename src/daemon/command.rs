@@ -1,5 +1,5 @@
 use crate::{
-    common,
+    common::{self, FdReader, FdWriter},
     prelude::*,
     protocol::cli::{self, Request, Response},
     Error, Result,
@@ -9,7 +9,10 @@ use std::{
     borrow::Cow,
     fmt::Debug,
     fs, io,
-    os::unix::{fs::FileTypeExt as _, io::RawFd},
+    os::unix::{
+        fs::FileTypeExt as _,
+        io::{AsRawFd as _, RawFd},
+    },
     path::{Path, PathBuf},
 };
 use tokio::net::{
@@ -128,10 +131,21 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
                 trace!("sending response");
                 writer.send(Response::Ok).await?;
 
-                let stdin = recv_fd("stdin", &mut reader, &mut writer).await?;
-                let stdout = recv_fd("stdout", &mut reader, &mut writer).await?;
-                let stderr = recv_fd("stderr", &mut reader, &mut writer).await?;
-                trace!(?stdin, ?stdout, ?stderr, "file descriptor received");
+                let stdin = unsafe {
+                    FdReader::from_raw_fd(recv_fd("stdin", &mut reader, &mut writer).await?)?
+                };
+                let stdout = unsafe {
+                    FdWriter::from_raw_fd(recv_fd("stdout", &mut reader, &mut writer).await?)?
+                };
+                let stderr = unsafe {
+                    FdWriter::from_raw_fd(recv_fd("stderr", &mut reader, &mut writer).await?)?
+                };
+                trace!(
+                    stdin = ?stdin.as_raw_fd(),
+                    stdout = ?stdout.as_raw_fd(),
+                    stderr = ?stderr.as_raw_fd(),
+                    "file descriptor received"
+                );
 
                 trace!("sending response");
                 writer.send(Response::Ok).await?;
