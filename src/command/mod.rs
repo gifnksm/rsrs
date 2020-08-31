@@ -1,4 +1,5 @@
-use crate::Result;
+use crate::{prelude::*, Result};
+use futures_util::future::BoxFuture;
 use std::{
     borrow::Cow,
     env,
@@ -53,13 +54,11 @@ enum SubCommand {
     Daemon(daemon::Opts),
 }
 
-pub(crate) async fn run(opts: Opts) -> Result<()> {
+pub(crate) fn run(opts: Opts) -> BoxFuture<'static, Result<()>> {
     match opts.sub_command {
-        SubCommand::Login(local) => login::run(opts.global, local).await?,
-        SubCommand::Remote(local) => remote::run(opts.global, local).await?,
-        SubCommand::Open(local) => open::run(opts.global, local).await?,
-        SubCommand::Daemon(local) => daemon::run(opts.global, local).await?,
+        SubCommand::Login(local) => login::run(opts.global, local).boxed(),
+        SubCommand::Remote(local) => remote::run(opts.global, local).boxed(),
+        SubCommand::Open(local) => open::run(opts.global, local).boxed(),
+        SubCommand::Daemon(local) => daemon::run(opts.global, local).boxed(),
     }
-
-    Ok(())
 }
