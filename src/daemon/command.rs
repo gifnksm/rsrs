@@ -123,33 +123,14 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
         trace!(?req, "req received");
         match req {
             Request::Open(open) => {
-                let cli::Open {
-                    pid,
-                    command,
-                    args,
-                    has_stdin,
-                    has_stdout,
-                    has_stderr,
-                } = open;
+                let cli::Open { pid, command, args } = open;
 
                 trace!("sending response");
                 writer.send(Response::Ok).await?;
 
-                let stdin = if has_stdin {
-                    Some(recv_fd("stdin", &mut reader, &mut writer).await?)
-                } else {
-                    None
-                };
-                let stdout = if has_stdout {
-                    Some(recv_fd("stdout", &mut reader, &mut writer).await?)
-                } else {
-                    None
-                };
-                let stderr = if has_stderr {
-                    Some(recv_fd("stderr", &mut reader, &mut writer).await?)
-                } else {
-                    None
-                };
+                let stdin = recv_fd("stdin", &mut reader, &mut writer).await?;
+                let stdout = recv_fd("stdout", &mut reader, &mut writer).await?;
+                let stderr = recv_fd("stderr", &mut reader, &mut writer).await?;
                 trace!(?stdin, ?stdout, ?stderr, "file descriptor received");
 
                 trace!("sending response");

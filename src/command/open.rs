@@ -120,24 +120,19 @@ async fn delegate_fd(local: Opts, stream: &mut UnixStream, child: &mut Child) ->
             pid: child.id(),
             command: local.command,
             args: local.args,
-            has_stdin: child.stdin.is_some(),
-            has_stdout: child.stdout.is_some(),
-            has_stderr: child.stderr.is_some(),
         }))
         .await?;
 
     trace!("waiting response");
     recv_ok(&mut reader).await?;
 
-    if let Some(stdin) = &child.stdin {
-        send_fd("stdin", stdin, &mut reader, &mut writer).await?;
-    }
-    if let Some(stdout) = &child.stdout {
-        send_fd("stdout", stdout, &mut reader, &mut writer).await?;
-    }
-    if let Some(stderr) = &child.stderr {
-        send_fd("stderr", stderr, &mut reader, &mut writer).await?;
-    }
+    let stdin = child.stdin.as_ref().unwrap();
+    let stdout = child.stdout.as_ref().unwrap();
+    let stderr = child.stderr.as_ref().unwrap();
+
+    send_fd("stdin", stdin, &mut reader, &mut writer).await?;
+    send_fd("stdout", stdout, &mut reader, &mut writer).await?;
+    send_fd("stderr", stderr, &mut reader, &mut writer).await?;
 
     trace!("waiting response");
     recv_ok(&mut reader).await?;
