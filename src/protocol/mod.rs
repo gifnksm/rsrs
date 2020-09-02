@@ -2,6 +2,7 @@ use crate::{prelude::*, router};
 use std::{ffi::OsString, os::unix::process::ExitStatusExt as _};
 
 pub(crate) mod cli;
+pub(crate) mod network;
 
 pub(crate) const MAGIC: &[u8] = b"\0RSRS\0magic\0number\0";
 

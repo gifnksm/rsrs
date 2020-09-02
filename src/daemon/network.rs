@@ -1,140 +1,144 @@
-use crate::{prelude::*, protocol, Result};
-use generational_arena::{Arena, Index};
+use crate::{
+    common,
+    prelude::*,
+    protocol,
+    protocol::network::{Handshake, NodeName},
+    Result,
+};
+use common::{FdReader, FdWriter};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
-    borrow::{Borrow, BorrowMut},
+    borrow::Borrow,
     collections::{hash_map::Entry, HashMap},
-    fmt::Display,
     hash::Hash,
 };
 
 #[tracing::instrument(err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
-pub(crate) async fn setup(is_leaf: bool) -> Result<()> {
-    if is_leaf {
-        setup_leaf().await.wrap_err("failed to setup network")?;
+pub(crate) async fn setup(is_leaf: bool) -> Result<NodeName> {
+    let my_name = if is_leaf {
+        setup_leaf().await?
     } else {
-        setup_root().await.wrap_err("failed to setup network")?;
-    }
+        setup_root().await?
+    };
 
     trace!("completed");
-    Ok(())
+    Ok(my_name)
 }
 
 #[tracing::instrument(err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
-async fn setup_leaf() -> Result<()> {
+async fn setup_leaf() -> Result<NodeName> {
     // send magic number to rsrs-open
     let mut out = io::stdout();
     out.write_all(protocol::MAGIC).await?;
     out.flush().await?;
 
-    // receive packet from rsrs-daemon
+    // receive handshake packet from rsrs-daemon
+    let mut reader = common::new_reader::<Handshake, _>(io::stdin());
 
-    Ok(())
+    let hs = reader.next().await.unwrap()?;
+    let Handshake {
+        server_name,
+        client_name,
+    } = hs;
+    debug!(%server_name, %client_name, "handshake received");
+
+    Ok(client_name)
 }
 
 #[tracing::instrument(err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
-async fn setup_root() -> Result<()> {
+async fn setup_root() -> Result<NodeName> {
     let mut store = NODE_STORE.lock();
-    let (id, name) = store.insert()?;
-    info!(%id, %name, "root daemon started");
+    let name = store.insert(Node::MyNode)?;
+    info!(%name, "root daemon started");
+    Ok(name)
+}
+
+#[tracing::instrument(skip(reader, writer), err)]
+#[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
+pub(crate) async fn connect(reader: FdReader, mut writer: FdWriter) -> Result<()> {
+    let (client_name, server_name) = {
+        // scope for lock guard
+        let mut store = NODE_STORE.lock();
+        let client_name = store.insert(Node::Handshake)?;
+        let server_name = store.my_name.clone();
+        assert!(!server_name.is_empty());
+        (client_name, server_name)
+    }; // lock ends here
+
+    let mut writer = common::new_writer::<Handshake, _>(&mut writer);
+    trace!("sending handshake message to daemon");
+    writer
+        .send(Handshake {
+            server_name,
+            client_name,
+        })
+        .await?;
+
     Ok(())
 }
 
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
-struct NodeId(Index);
-
-impl Display for NodeId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (idx, gen) = self.0.into_raw_parts();
-        write!(f, "{}#{}", idx, gen)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
-struct NodeName(String);
-
-impl Display for NodeName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl Borrow<str> for NodeName {
-    fn borrow(&self) -> &str {
-        &self.0
-    }
-}
-
-impl BorrowMut<str> for NodeName {
-    fn borrow_mut(&mut self) -> &mut str {
-        &mut self.0
-    }
-}
-
-impl From<String> for NodeName {
-    fn from(s: String) -> Self {
-        Self(s)
-    }
-}
-
-#[derive(Debug)]
-struct Node {
-    name: NodeName,
+#[derive(custom_debug::Debug)]
+enum Node {
+    MyNode,
+    Handshake,
+    Connected { reader: FdReader, writer: FdWriter },
 }
 
 static NODE_STORE: Lazy<Mutex<NodeStore>> = Lazy::new(|| {
     Mutex::new(NodeStore {
-        nodes: Arena::new(),
-        by_name: HashMap::new(),
+        my_name: NodeName::default(),
+        nodes: HashMap::new(),
         name_gen: namegen::Generator::with_rng(StdRng::from_entropy()),
     })
 });
 
 #[derive(Debug)]
 struct NodeStore {
-    nodes: Arena<Node>,
-    by_name: HashMap<NodeName, NodeId>,
+    my_name: NodeName,
+    nodes: HashMap<NodeName, Node>,
     name_gen: namegen::Generator<'static, StdRng>,
 }
 
 impl NodeStore {
-    fn insert_with_name(&mut self, name: impl Into<NodeName>) -> Result<NodeId> {
+    fn insert_with_name(&mut self, name: impl Into<NodeName>, node: Node) -> Result<()> {
         let name = name.into();
-        let e = match self.by_name.entry(name.clone()) {
-            Entry::Occupied(_) => bail!("node name already used: {}", name),
-            Entry::Vacant(e) => e,
-        };
-        let idx = self.nodes.insert(Node { name });
-        let id = NodeId(idx);
-        e.insert(id);
-        Ok(id)
-    }
+        assert!(!name.is_empty());
 
-    fn insert(&mut self) -> Result<(NodeId, NodeName)> {
-        loop {
-            let name = NodeName(self.name_gen.next().unwrap());
-            match self.insert_with_name(name.clone()) {
-                Ok(id) => return Ok((id, name)),
-                Err(_) => continue,
+        if let Node::MyNode = node {
+            if !self.my_name.is_empty() {
+                bail!("my node name is already registered");
             }
+            self.my_name = name.clone();
         }
+
+        match self.nodes.entry(name) {
+            Entry::Occupied(e) => bail!("node name already used: {}", e.key()),
+            Entry::Vacant(e) => e.insert(node),
+        };
+        Ok(())
     }
 
-    fn get_id<Q>(&self, name: &Q) -> Option<NodeId>
+    fn insert(&mut self, node: Node) -> Result<NodeName> {
+        let name = loop {
+            let name = NodeName::from(self.name_gen.next().unwrap());
+            if !self.nodes.contains_key(&name) {
+                break name;
+            }
+        };
+        self.insert_with_name(name.clone(), node)?;
+        Ok(name)
+    }
+
+    fn get<Q>(&self, name: &Q) -> Option<&Node>
     where
         NodeName: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.by_name.get(name).copied()
-    }
-
-    fn get_node(&self, id: NodeId) -> Option<&Node> {
-        self.nodes.get(id.0)
+        self.nodes.get(name)
     }
 }

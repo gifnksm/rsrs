@@ -9,7 +9,7 @@ mod network;
 pub(crate) async fn run(sock_path: Cow<'_, Path>, is_leaf: bool) -> Result<()> {
     trace!("setting up...");
 
-    network::setup(is_leaf)
+    let my_name = network::setup(is_leaf)
         .await
         .wrap_err("failed to setup network")?;
 
@@ -17,7 +17,7 @@ pub(crate) async fn run(sock_path: Cow<'_, Path>, is_leaf: bool) -> Result<()> {
         .await
         .wrap_err("failed to setup command server")?;
 
-    trace!("setup completed");
+    trace!(%my_name, "setup completed");
 
     tokio::try_join!(
         command::run(listener).map_err(|e| e.wrap_err("command server end unexpectedly"))

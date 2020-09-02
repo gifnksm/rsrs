@@ -1,5 +1,6 @@
 use crate::{
     common::{self, FdReader, FdWriter},
+    daemon,
     prelude::*,
     protocol::cli::{self, Request, Response},
     Error, Result,
@@ -138,7 +139,7 @@ async fn serve(mut stream: UnixStream) -> Result<()> {
     Ok(())
 }
 
-#[tracing::instrument(skip(reader, writer), err)]
+#[tracing::instrument(skip(req, reader, writer), err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
 async fn open(
     req: cli::Open,
@@ -150,9 +151,9 @@ async fn open(
     trace!("sending response");
     writer.send(Response::Ok).await?;
 
-    let stdin = unsafe { FdReader::from_raw_fd(recv_fd("stdin", reader, writer).await?)? };
-    let stdout = unsafe { FdWriter::from_raw_fd(recv_fd("stdout", reader, writer).await?)? };
-    let stderr = unsafe { FdWriter::from_raw_fd(recv_fd("stderr", reader, writer).await?)? };
+    let stdin = unsafe { FdWriter::from_raw_fd(recv_fd("stdin", reader, writer).await?)? };
+    let stdout = unsafe { FdReader::from_raw_fd(recv_fd("stdout", reader, writer).await?)? };
+    let stderr = unsafe { FdReader::from_raw_fd(recv_fd("stderr", reader, writer).await?)? };
     trace!(
         stdin = ?stdin.as_raw_fd(),
         stdout = ?stdout.as_raw_fd(),
@@ -160,7 +161,11 @@ async fn open(
         "file descriptor received"
     );
 
-    trace!("sending response");
+    daemon::network::connect(stdout, stdin)
+        .await
+        .wrap_err("failed to connect to client")?;
+
+    trace!("sending response to command");
     writer.send(Response::Ok).await?;
 
     info!(%pid, ?command, ?args, "connection opened");
