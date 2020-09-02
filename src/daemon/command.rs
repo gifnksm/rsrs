@@ -161,7 +161,7 @@ async fn open(
         "file descriptor received"
     );
 
-    daemon::network::connect(stdout, stdin)
+    daemon::network::connect(stdin, stdout, stderr)
         .await
         .wrap_err("failed to connect to client")?;
 

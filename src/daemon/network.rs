@@ -14,6 +14,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
 };
+use tokio::io::BufReader;
 
 #[tracing::instrument(err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
@@ -58,9 +59,9 @@ async fn setup_root() -> Result<NodeName> {
     Ok(name)
 }
 
-#[tracing::instrument(skip(reader, writer), err)]
+#[tracing::instrument(skip(stdin, stdout, stderr), err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
-pub(crate) async fn connect(reader: FdReader, mut writer: FdWriter) -> Result<()> {
+pub(crate) async fn connect(mut stdin: FdWriter, stdout: FdReader, stderr: FdReader) -> Result<()> {
     let (client_name, server_name) = {
         // scope for lock guard
         let mut store = NODE_STORE.lock();
@@ -70,14 +71,22 @@ pub(crate) async fn connect(reader: FdReader, mut writer: FdWriter) -> Result<()
         (client_name, server_name)
     }; // lock ends here
 
-    let mut writer = common::new_writer::<Handshake, _>(&mut writer);
+    let mut writer = common::new_writer::<Handshake, _>(&mut stdin);
     trace!("sending handshake message to daemon");
     writer
         .send(Handshake {
             server_name,
-            client_name,
+            client_name: client_name.clone(),
         })
         .await?;
+
+    // forward stderr
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Some(line) = lines.next_line().await.unwrap() {
+            eprintln!("[{}] {}", client_name, line);
+        }
+    });
 
     Ok(())
 }
