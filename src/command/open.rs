@@ -22,7 +22,7 @@ use tracing_futures::Instrument;
 /// Launch RSRS daemon
 #[derive(Debug, clap::Clap)]
 pub(super) struct Opts {
-    /// Command to open a remote session.
+    /// Command to open a remote session
     #[clap(name = "command")]
     command: OsString,
     /// Arguments to command

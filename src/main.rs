@@ -19,22 +19,25 @@ type Result<T> = eyre::Result<T, Error>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    install_tracing();
+    let opts = Opts::parse();
+
+    install_tracing(opts.log_directive());
     color_eyre::install()?;
 
-    command::run(Opts::parse()).await?;
+    command::run(opts).await?;
 
     Ok(())
 }
 
-fn install_tracing() {
+fn install_tracing(directive: Option<&str>) {
     use tracing_error::ErrorLayer;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     let fmt_layer = fmt::layer().with_writer(std::io::stderr);
-    let filter_layer = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info"))
-        .unwrap();
+    let filter_layer = directive
+        .map(EnvFilter::new)
+        .or_else(|| EnvFilter::try_from_default_env().ok())
+        .unwrap_or_else(|| EnvFilter::new("info"));
     let error_layer = ErrorLayer::default();
 
     tracing_subscriber::registry()

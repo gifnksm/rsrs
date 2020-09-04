@@ -21,9 +21,20 @@ pub(super) struct Opts {
     sub_command: SubCommand,
 }
 
+impl Opts {
+    pub(super) fn log_directive(&self) -> Option<&str> {
+        self.global.log_directive.as_deref()
+    }
+}
+
 #[derive(Debug, clap::Clap)]
 struct GlobalOpts {
+    /// Socket path
+    #[clap(name = "sock-path", long)]
     sock_path: Option<PathBuf>,
+    /// Log directive
+    #[clap(name = "log", long)]
+    log_directive: Option<String>,
 }
 
 impl GlobalOpts {
