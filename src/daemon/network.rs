@@ -2,7 +2,7 @@ use crate::{
     common,
     prelude::*,
     protocol,
-    protocol::network::{Handshake, NodeName},
+    protocol::network::{Handshake, HandshakeRsp, Message, NodeName},
     Result,
 };
 use common::{FdReader, FdWriter};
@@ -14,54 +14,76 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     hash::Hash,
 };
-use tokio::io::BufReader;
+use tokio::{fs::File, io::BufReader, sync::mpsc};
 
 #[tracing::instrument(err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
-pub(crate) async fn setup(is_leaf: bool) -> Result<NodeName> {
-    let my_name = if is_leaf {
+pub(crate) async fn setup(is_leaf: bool) -> Result<()> {
+    if is_leaf {
         setup_leaf().await?
     } else {
         setup_root().await?
     };
 
     trace!("completed");
-    Ok(my_name)
+    Ok(())
 }
 
 #[tracing::instrument(err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
-async fn setup_leaf() -> Result<NodeName> {
+async fn setup_leaf() -> Result<()> {
+    let mut reader = File::open("/dev/stdin").await?;
+    let mut writer = File::create("/dev/stdout").await?;
+
     // send magic number to rsrs-open
-    let mut out = io::stdout();
-    out.write_all(protocol::MAGIC).await?;
-    out.flush().await?;
+    trace!("sending magic number");
+    writer.write_all(protocol::MAGIC).await?;
+    writer.flush().await?;
 
     // receive handshake packet from rsrs-daemon
-    let mut reader = common::new_reader::<Handshake, _>(io::stdin());
-
-    let hs = reader.next().await.unwrap()?;
+    trace!("receiving handshake request");
     let Handshake {
         server_name,
         client_name,
-    } = hs;
-    debug!(%server_name, %client_name, "handshake received");
+    } = common::new_reader(&mut reader).next().await.unwrap()?;
+    trace!(%server_name, %client_name, "handshake received");
 
-    Ok(client_name)
+    // send handshake response
+    trace!("sending handshake response");
+    common::new_writer(&mut writer).send(HandshakeRsp).await?;
+    debug!(%server_name, %client_name, "handshake completed");
+
+    let mut reader = common::new_reader::<Message, _>(reader);
+    let mut writer = common::new_writer::<Message, _>(writer);
+
+    // TODO: specify appropriate buffer size
+    let (tx, rx) = mpsc::channel(100);
+    {
+        // scope for lock guard
+        let mut store = NODE_STORE.lock();
+        store.insert_with_name(client_name.clone(), Node::MyNode)?;
+        store.insert_with_name(server_name, Node::Connected { sender: tx })?;
+    }
+
+    Ok(())
 }
 
 #[tracing::instrument(err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
-async fn setup_root() -> Result<NodeName> {
+async fn setup_root() -> Result<()> {
     let mut store = NODE_STORE.lock();
     let name = store.insert(Node::MyNode)?;
     info!(%name, "root daemon started");
-    Ok(name)
+    Ok(())
 }
 
-#[tracing::instrument(skip(stdin, stdout, stderr), err)]
+#[tracing::instrument(skip(remote_stdin, remote_stdout, remote_stderr), err)]
 #[allow(clippy::unit_arg)] // workaround for https://github.com/tokio-rs/tracing/issues/843
-pub(crate) async fn connect(mut stdin: FdWriter, stdout: FdReader, stderr: FdReader) -> Result<()> {
+pub(crate) async fn connect_to_leaf(
+    mut remote_stdin: FdWriter,
+    mut remote_stdout: FdReader,
+    remote_stderr: FdReader,
+) -> Result<()> {
     let (client_name, server_name) = {
         // scope for lock guard
         let mut store = NODE_STORE.lock();
@@ -71,22 +93,49 @@ pub(crate) async fn connect(mut stdin: FdWriter, stdout: FdReader, stderr: FdRea
         (client_name, server_name)
     }; // lock ends here
 
-    let mut writer = common::new_writer::<Handshake, _>(&mut stdin);
+    // forward stderr
+    tokio::spawn({
+        let client_name = client_name.clone();
+        async move {
+            let mut lines = BufReader::new(remote_stderr).lines();
+            while let Some(line) = lines.next_line().await.unwrap() {
+                eprintln!("[{}] {}", client_name, line);
+            }
+        }
+    });
+
     trace!("sending handshake message to daemon");
-    writer
+    common::new_writer(&mut remote_stdin)
         .send(Handshake {
-            server_name,
+            server_name: server_name.clone(),
             client_name: client_name.clone(),
         })
         .await?;
 
-    // forward stderr
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Some(line) = lines.next_line().await.unwrap() {
-            eprintln!("[{}] {}", client_name, line);
+    trace!("receiving handshake response from daemon");
+    let HandshakeRsp = common::new_reader(&mut remote_stdout)
+        .next()
+        .await
+        .unwrap()?;
+
+    debug!(%server_name, %client_name, "handshake completed");
+
+    let mut reader = common::new_reader::<Message, _>(remote_stdout);
+    let mut writer = common::new_writer::<Message, _>(remote_stdin);
+
+    // TODO: specify appropriate buffer size
+    let (tx, mut rx) = mpsc::channel(100);
+
+    {
+        // scope for lock guard
+        let mut store = NODE_STORE.lock();
+        match store.get_mut(&client_name).unwrap() {
+            node @ Node::Handshake => {
+                *node = Node::Connected { sender: tx };
+            }
+            _ => unreachable!(),
         }
-    });
+    }
 
     Ok(())
 }
@@ -95,7 +144,7 @@ pub(crate) async fn connect(mut stdin: FdWriter, stdout: FdReader, stderr: FdRea
 enum Node {
     MyNode,
     Handshake,
-    Connected { reader: FdReader, writer: FdWriter },
+    Connected { sender: mpsc::Sender<Message> },
 }
 
 static NODE_STORE: Lazy<Mutex<NodeStore>> = Lazy::new(|| {
@@ -149,5 +198,13 @@ impl NodeStore {
         Q: Hash + Eq,
     {
         self.nodes.get(name)
+    }
+
+    fn get_mut<Q>(&mut self, name: &Q) -> Option<&mut Node>
+    where
+        NodeName: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.nodes.get_mut(name)
     }
 }

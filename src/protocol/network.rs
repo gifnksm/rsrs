@@ -5,7 +5,16 @@ use std::{
 };
 
 #[derive(
-    Debug, Default, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Default,
+    Clone,
+    Ord,
+    PartialOrd,
+    Eq,
+    PartialEq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub(crate) struct NodeName(String);
 
@@ -45,4 +54,13 @@ impl Deref for NodeName {
 pub(crate) struct Handshake {
     pub(crate) client_name: NodeName,
     pub(crate) server_name: NodeName,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct HandshakeRsp;
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Message {
+    src: NodeName,
+    dst: NodeName,
 }

@@ -28,6 +28,7 @@ passfd = { version = "0.1.4", features = [ "tokio_02" ] }
 rand = "0.7.3"
 serde = { version = "1.0.115", features = [ "derive" ] }
 tokio = { version = "0.2.22", features = [
+    "fs",
     "io-std",
     "io-util",
     "macros",
