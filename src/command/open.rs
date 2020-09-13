@@ -10,6 +10,7 @@ use nix::unistd;
 use passfd::tokio_02::FdPassingExt;
 use std::{ffi::OsString, fmt::Debug, os::unix::io::AsRawFd, process::Stdio};
 use tokio::{
+    fs::File,
     net::{
         unix::{ReadHalf, WriteHalf},
         UnixStream,
@@ -70,11 +71,14 @@ async fn launch_remote(child: &mut Child) -> Result<()> {
     let mut remote_stderr = child.stderr.take().unwrap();
 
     let (tx, rx) = watch::channel(false);
+    let mut local_stdin = File::open("/dev/stdin").await?;
+    let mut local_stdout = File::create("/dev/stdout").await?;
+    let mut local_stderr = File::create("/dev/stderr").await?;
 
     let stdin_handler = tokio::spawn({
         let rx = rx.clone();
         async move {
-            forward_until_interrupted(io::stdin(), &mut remote_stdin, rx)
+            forward_until_interrupted(&mut local_stdin, &mut remote_stdin, rx)
                 .instrument(tracing::info_span!("stdin"))
                 .await
                 .unwrap();
@@ -84,7 +88,7 @@ async fn launch_remote(child: &mut Child) -> Result<()> {
     let stderr_handler = tokio::spawn({
         let rx = rx.clone();
         async move {
-            forward_until_interrupted(&mut remote_stderr, io::stderr(), rx)
+            forward_until_interrupted(&mut remote_stderr, &mut local_stderr, rx)
                 .instrument(tracing::info_span!("stderr"))
                 .await
                 .unwrap();
@@ -92,7 +96,7 @@ async fn launch_remote(child: &mut Child) -> Result<()> {
         }
     });
     let stdout_handler = tokio::spawn(async move {
-        forward_until_magic(&mut remote_stdout, io::stdout(), protocol::MAGIC)
+        forward_until_magic(&mut remote_stdout, &mut local_stdout, protocol::MAGIC)
             .instrument(tracing::info_span!("stdout"))
             .await
             .unwrap();

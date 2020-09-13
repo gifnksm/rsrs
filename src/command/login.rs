@@ -16,6 +16,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{
+    fs::File,
     io::BufReader,
     process::Command,
     signal::unix::{signal, SignalKind},
@@ -120,6 +121,8 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
     let remote_stdin = child.stdin.take().unwrap();
     let remote_stdout = child.stdout.take().unwrap();
     let remote_stderr = child.stderr.take().unwrap();
+    let local_stdin = File::open("/dev/stdin").await?;
+    let local_stdout = File::create("/dev/stdout").await?;
     let status = child;
 
     let reader = common::new_reader(remote_stdout).err_into::<Error>();
@@ -210,7 +213,7 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
             .send(protocol::Command::Sink(protocol::Sink {
                 id,
                 rx: channel_rx,
-                stream: Box::new(io::stdout()),
+                stream: Box::new(local_stdout),
                 pty_name: None,
             }))
             .map_err(|_| eyre!("send failed"))
@@ -230,7 +233,7 @@ pub(super) async fn run(_: GlobalOpts, opts: Opts) -> Result<()> {
         handler_tx
             .send(protocol::Command::Source(protocol::Source {
                 id,
-                stream: Box::new(io::stdin()),
+                stream: Box::new(local_stdin),
             }))
             .map_err(|_| eyre!("send failed"))
             .await?;
