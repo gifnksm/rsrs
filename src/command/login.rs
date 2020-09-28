@@ -26,7 +26,7 @@ use tokio::{
 #[derive(Debug, clap::Clap)]
 pub(super) struct Opts {
     /// Disable pseudo-terminal allocation.
-    #[clap(name = "disable-pty", short = "T", overrides_with = "force-enable-pty")]
+    #[clap(name = "disable-pty", short = 'T', overrides_with = "force-enable-pty")]
     disable_pty: bool,
 
     /// Force pseudo-terminal allocation.
@@ -37,7 +37,7 @@ pub(super) struct Opts {
     /// Multiple `-t` options force tty allocation, even if `ssh` has no local tty.
     #[clap(
         name = "force-enable-pty",
-        short = "t",
+        short = 't',
         overrides_with = "disable-pty",
         parse(from_occurrences)
     )]
@@ -46,7 +46,7 @@ pub(super) struct Opts {
     /// Do not execute a remote command.
     ///
     /// This is useful for just forwarding ports.
-    #[clap(name = "no-remote-command", short = "N")]
+    #[clap(name = "no-remote-command", short = 'N')]
     no_remote_command: bool,
 
     /// Commands to executed on a remote machine.
